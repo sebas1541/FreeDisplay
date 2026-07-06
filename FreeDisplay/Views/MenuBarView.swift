@@ -300,6 +300,139 @@ struct MenuBarView: View {
     }
 }
 
+// MARK: - QuickDisplayPanelView
+
+struct QuickDisplayPanelView: View {
+    @EnvironmentObject private var displayManager: DisplayManager
+    @ObservedObject private var virtualDisplayService = VirtualDisplayService.shared
+
+    private var visibleDisplays: [DisplayInfo] {
+        displayManager.displays.filter { !virtualDisplayService.isVirtualDisplay($0.displayID) }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 0) {
+                    if visibleDisplays.isEmpty {
+                        HStack(spacing: 8) {
+                            MenuItemIcon(systemName: "display.trianglebadge.exclamationmark", color: .orange)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("No displays detected")
+                                    .font(.body)
+                                Text("Rescans when opened")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            Button("Refresh") {
+                                displayManager.refreshDisplays()
+                            }
+                            .buttonStyle(.borderless)
+                            .font(.caption)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                    } else {
+                        ForEach(Array(visibleDisplays.enumerated()), id: \.element.id) { index, display in
+                            QuickDisplayControlView(display: display)
+                            if index < visibleDisplays.count - 1 {
+                                Divider()
+                                    .opacity(0.3)
+                                    .padding(.vertical, 4)
+                            }
+                        }
+                    }
+                }
+                .padding(.vertical, 8)
+            }
+            .frame(minHeight: 180, maxHeight: 620)
+        }
+        .frame(width: 360)
+        .task {
+            displayManager.refreshDisplays()
+        }
+    }
+}
+
+struct QuickDisplayControlView: View {
+    @ObservedObject var display: DisplayInfo
+    @State private var showDisplayModes = false
+
+    private var subtitle: String {
+        var parts: [String] = []
+        if let mode = display.currentDisplayMode {
+            parts.append(mode.resolutionString)
+            if mode.isHiDPI {
+                parts.append("HiDPI")
+            }
+        } else {
+            parts.append("\(display.pixelWidth)x\(display.pixelHeight)")
+        }
+        if display.isMain {
+            parts.append("Main")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                MenuItemIcon(systemName: display.isBuiltin ? "macbook" : "display", color: .blue)
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 5) {
+                        Text(display.name)
+                            .font(.headline)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        if display.isMain {
+                            Text("Main")
+                                .font(.caption2)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.accentColor)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(Color.accentColor.opacity(0.14))
+                                .cornerRadius(4)
+                        }
+                    }
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+
+            BrightnessSliderView(display: display)
+
+            Divider()
+                .opacity(0.3)
+                .padding(.vertical, 2)
+
+            HiDPIRowView(display: display)
+
+            ExpandableRow(
+                icon: "rectangle.on.rectangle",
+                iconColor: .blue,
+                label: "DPI / Display Modes",
+                subtitle: display.currentDisplayMode?.isHiDPI == true ? "HiDPI" : nil,
+                isExpanded: $showDisplayModes
+            )
+
+            if showDisplayModes {
+                DisplayModeListView(display: display)
+                    .padding(.leading, 8)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .padding(.vertical, 2)
+    }
+}
+
 // MARK: - SettingsView (Phase 12: embedded in MenuBarView)
 
 struct SettingsView: View {
