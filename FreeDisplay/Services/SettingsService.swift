@@ -28,6 +28,7 @@ final class SettingsService: ObservableObject, @unchecked Sendable {
         static let launchAtLoginPrompted  = "fd.launchAtLogin.prompted"
         static let menuWidth              = "fd.menuWidth"
         static let showCombinedBrightness = "fd.showCombinedBrightness"
+        static let allowSoftwareBrightness = "fd.allowSoftwareBrightness"
         static let ddcCacheTTL            = "fd.ddcCacheTTL"
         static let checkUpdatesOnLaunch   = "fd.checkUpdatesOnLaunch"
         static let colorPickerHistory     = "fd.colorPickerHistory"
@@ -53,6 +54,10 @@ final class SettingsService: ObservableObject, @unchecked Sendable {
 
     @Published var showCombinedBrightness: Bool = true {
         didSet { defaults.set(showCombinedBrightness, forKey: Keys.showCombinedBrightness) }
+    }
+
+    @Published var allowSoftwareBrightness: Bool = true {
+        didSet { defaults.set(allowSoftwareBrightness, forKey: Keys.allowSoftwareBrightness) }
     }
 
     @Published var ddcCacheTTL: Double = 5.0 {
@@ -132,6 +137,8 @@ final class SettingsService: ObservableObject, @unchecked Sendable {
             ? defaults.double(forKey: Keys.menuWidth) : 320
         showCombinedBrightness = defaults.object(forKey: Keys.showCombinedBrightness) != nil
             ? defaults.bool(forKey: Keys.showCombinedBrightness) : true
+        allowSoftwareBrightness = defaults.object(forKey: Keys.allowSoftwareBrightness) != nil
+            ? defaults.bool(forKey: Keys.allowSoftwareBrightness) : true
         ddcCacheTTL = defaults.object(forKey: Keys.ddcCacheTTL) != nil
             ? defaults.double(forKey: Keys.ddcCacheTTL) : 5.0
         checkUpdatesOnLaunch = defaults.object(forKey: Keys.checkUpdatesOnLaunch) != nil

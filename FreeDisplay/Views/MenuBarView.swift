@@ -302,6 +302,7 @@ struct MenuBarView: View {
 // MARK: - SettingsView (Phase 12: embedded in MenuBarView)
 
 struct SettingsView: View {
+    @EnvironmentObject private var displayManager: DisplayManager
     @ObservedObject private var settings = SettingsService.shared
 
     var body: some View {
@@ -368,6 +369,28 @@ struct SettingsView: View {
             .controlSize(.small)
             .padding(.horizontal, 12)
             .help("Show one brightness slider for all displays")
+
+            // Software brightness fallback
+            Toggle(isOn: Binding(
+                get: { settings.allowSoftwareBrightness },
+                set: { newValue in
+                    settings.allowSoftwareBrightness = newValue
+                    if !newValue {
+                        BrightnessService.shared.disableSoftwareBrightness(for: displayManager.displays)
+                    }
+                }
+            )) {
+                HStack(spacing: 6) {
+                    MenuItemIcon(systemName: "sun.haze.fill", color: .orange)
+                        .accessibilityHidden(true)
+                    Text("Allow software brightness")
+                        .font(.body)
+                }
+            }
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            .padding(.horizontal, 12)
+            .help("When off, FreeDisplay only uses hardware/system brightness and never dims with gamma software fallback")
 
             // Check for updates at launch
             Toggle(isOn: $settings.checkUpdatesOnLaunch) {

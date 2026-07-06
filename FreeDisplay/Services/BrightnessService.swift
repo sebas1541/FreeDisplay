@@ -215,11 +215,9 @@ final class BrightnessService: @unchecked Sendable {
             // Check current DDC availability status
             let currentStatus: Bool? = ddcAvailableLock.withLock { ddcAvailable[displayID] }
 
-            if currentStatus == false {
-                // DDC known unavailable — go straight to software fallback
-                queue.async { [weak self] in
-                    self?.setSoftwareBrightness(clamped, for: displayID)
-                }
+            if currentStatus == false && SettingsService.shared.allowSoftwareBrightness {
+                // DDC known unavailable; use software fallback while it is allowed.
+                setSoftwareBrightness(clamped, for: displayID)
                 return
             }
 
@@ -242,9 +240,11 @@ final class BrightnessService: @unchecked Sendable {
                         self.ddcAvailableLock.withLock { self.ddcAvailable[displayID] = true }
                     } else {
                         self.ddcAvailableLock.withLock { self.ddcAvailable[displayID] = false }
-                        self.setSoftwareBrightness(clamped, for: displayID)
+                        if SettingsService.shared.allowSoftwareBrightness {
+                            self.setSoftwareBrightness(clamped, for: displayID)
+                        }
                         #if DEBUG
-                        print("[BrightnessService] DDC unavailable for display \(displayID), using software fallback")
+                        print("[BrightnessService] DDC unavailable for display \(displayID), software fallback enabled: \(SettingsService.shared.allowSoftwareBrightness)")
                         #endif
                     }
                 }
@@ -292,7 +292,7 @@ final class BrightnessService: @unchecked Sendable {
         } else {
             let currentStatus: Bool? = ddcAvailableLock.withLock { ddcAvailable[displayID] }
 
-            if currentStatus == false {
+            if currentStatus == false && SettingsService.shared.allowSoftwareBrightness {
                 // Software (gamma) path: 8 steps over 200ms
                 anim.animate(from: fromBrightness, to: clamped, steps: 8, duration: 0.20) { [weak display] value, _ in
                     display?.brightness = value
@@ -323,9 +323,11 @@ final class BrightnessService: @unchecked Sendable {
                             } else if isLast {
                                 // DDC failed — mark unavailable and apply software fallback
                                 self.ddcAvailableLock.withLock { self.ddcAvailable[displayID] = false }
-                                self.setSoftwareBrightness(clamped, for: displayID)
+                                if SettingsService.shared.allowSoftwareBrightness {
+                                    self.setSoftwareBrightness(clamped, for: displayID)
+                                }
                                 #if DEBUG
-                                print("[BrightnessService] smooth DDC failed for \(displayID), using software fallback")
+                                print("[BrightnessService] smooth DDC failed for \(displayID), software fallback enabled: \(SettingsService.shared.allowSoftwareBrightness)")
                                 #endif
                             }
                         }
@@ -343,7 +345,15 @@ final class BrightnessService: @unchecked Sendable {
     ///
     /// If GammaService has an active adjustment for this display, it delegates to GammaService
     /// so the two do not overwrite each other's CGSetDisplayTransfer* call.
+    @MainActor
     func setSoftwareBrightness(_ brightness: Double, for displayID: CGDirectDisplayID) {
+        guard SettingsService.shared.allowSoftwareBrightness else {
+            #if DEBUG
+            print("[BrightnessService] software brightness ignored because it is disabled")
+            #endif
+            return
+        }
+
         let factor = max(0.05, brightness / 100.0)
         softwareBrightnessLock.withLock { softwareBrightnessFactors[displayID] = factor }
         saveSoftwareBrightness(factor: factor, for: displayID)
@@ -379,7 +389,11 @@ final class BrightnessService: @unchecked Sendable {
     }
 
     /// Resets the gamma table for a display back to the identity curve.
+    @MainActor
     func resetSoftwareBrightness(for displayID: CGDirectDisplayID) {
+        _ = softwareBrightnessLock.withLock { softwareBrightnessFactors.removeValue(forKey: displayID) }
+        UserDefaults.standard.removeObject(forKey: softBrightnessKey(for: displayID))
+
         let size = 256
         let values = (0..<size).map { CGGammaValue($0) / CGGammaValue(size - 1) }
         var red = values
@@ -406,7 +420,10 @@ final class BrightnessService: @unchecked Sendable {
     /// Re-applies the software brightness for a display after wake from sleep or hot-plug.
     /// Checks in-memory factor first; falls back to UserDefaults so restart is handled too.
     /// No-op if no saved factor < 1.0 exists.
+    @MainActor
     func reapplySoftwareBrightnessIfNeeded(for display: DisplayInfo) {
+        guard SettingsService.shared.allowSoftwareBrightness else { return }
+
         let displayID = display.displayID
         let inMemory = softwareBrightnessLock.withLock { softwareBrightnessFactors[displayID] }
         let factor = inMemory ?? loadSoftwareBrightness(for: displayID)
@@ -416,6 +433,14 @@ final class BrightnessService: @unchecked Sendable {
             softwareBrightnessLock.withLock { softwareBrightnessFactors[displayID] = f }
         }
         setSoftwareBrightness(f * 100.0, for: displayID)
+    }
+
+    @MainActor
+    func disableSoftwareBrightness(for displays: [DisplayInfo]) {
+        for display in displays {
+            cancelAnimation(for: display.displayID)
+            resetSoftwareBrightness(for: display.displayID)
+        }
     }
 
     // MARK: - Internal Display (IODisplayGetFloatParameter)
