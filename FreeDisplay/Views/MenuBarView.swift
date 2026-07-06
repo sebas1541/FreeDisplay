@@ -749,6 +749,23 @@ struct SettingsView: View {
             .padding(.horizontal, 12)
             .help("When off, FreeDisplay only uses hardware/system brightness and never dims with gamma software fallback")
 
+            // Hide brightness slider in the quick menu (e.g. when using another app for DDC brightness)
+            Toggle(isOn: Binding(
+                get: { settings.hideBrightnessInQuickMenu },
+                set: { settings.hideBrightnessInQuickMenu = $0 }
+            )) {
+                HStack(spacing: 6) {
+                    MenuItemIcon(systemName: "sun.max.trianglebadge.exclamationmark", color: .gray)
+                        .accessibilityHidden(true)
+                    Text("Hide brightness in quick menu")
+                        .font(.body)
+                }
+            }
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            .padding(.horizontal, 12)
+            .help("Only show the resolution slider in the status bar quick menu — useful if you control brightness with a different app")
+
             // Keyboard brightness shortcuts
             Toggle(isOn: $settings.brightnessShortcutsEnabled) {
                 HStack(spacing: 6) {

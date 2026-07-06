@@ -37,6 +37,7 @@ final class SettingsService: ObservableObject, @unchecked Sendable {
         static let brightnessShortcutsEnabled = "fd.brightnessShortcuts.enabled"
         static let brightnessIncreaseShortcut = "fd.brightnessShortcuts.increase"
         static let brightnessDecreaseShortcut = "fd.brightnessShortcuts.decrease"
+        static let hideBrightnessInQuickMenu  = "fd.quickMenu.hideBrightness"
         static let ddcCacheTTL            = "fd.ddcCacheTTL"
         static let checkUpdatesOnLaunch   = "fd.checkUpdatesOnLaunch"
         static let colorPickerHistory     = "fd.colorPickerHistory"
@@ -78,6 +79,12 @@ final class SettingsService: ObservableObject, @unchecked Sendable {
 
     @Published var brightnessDecreaseShortcut: KeyboardShortcutSpec? = nil {
         didSet { saveShortcut(brightnessDecreaseShortcut, forKey: Keys.brightnessDecreaseShortcut) }
+    }
+
+    /// When true, the quick menu (status item click) omits the brightness slider entirely,
+    /// leaving only the resolution/HiDPI slider — for users who prefer a different app for DDC brightness.
+    @Published var hideBrightnessInQuickMenu: Bool = false {
+        didSet { defaults.set(hideBrightnessInQuickMenu, forKey: Keys.hideBrightnessInQuickMenu) }
     }
 
     @Published var ddcCacheTTL: Double = 5.0 {
@@ -177,6 +184,7 @@ final class SettingsService: ObservableObject, @unchecked Sendable {
         brightnessShortcutsEnabled = defaults.bool(forKey: Keys.brightnessShortcutsEnabled)
         brightnessIncreaseShortcut = loadShortcut(forKey: Keys.brightnessIncreaseShortcut)
         brightnessDecreaseShortcut = loadShortcut(forKey: Keys.brightnessDecreaseShortcut)
+        hideBrightnessInQuickMenu = defaults.bool(forKey: Keys.hideBrightnessInQuickMenu)
         ddcCacheTTL = defaults.object(forKey: Keys.ddcCacheTTL) != nil
             ? defaults.double(forKey: Keys.ddcCacheTTL) : 5.0
         checkUpdatesOnLaunch = defaults.object(forKey: Keys.checkUpdatesOnLaunch) != nil

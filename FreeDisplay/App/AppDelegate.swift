@@ -194,7 +194,7 @@ private final class FDQuickMenuView: NSView {
     private let spacing: CGFloat = 9
 
     init(displays: [DisplayInfo]) {
-        let blockHeight: CGFloat = 112
+        let blockHeight: CGFloat = SettingsService.shared.hideBrightnessInQuickMenu ? 80 : 112
         let height: CGFloat
         if displays.isEmpty {
             height = 68
@@ -253,13 +253,17 @@ private final class FDQuickDisplayBlockView: NSView {
     private var appliedModeID: Int32 = 0
     private var isSwitchingMode = false
     private var lastBrightnessSend = Date.distantPast
+    private let hideBrightness: Bool
 
     init(display: DisplayInfo) {
         self.display = display
+        self.hideBrightness = SettingsService.shared.hideBrightnessInQuickMenu
         super.init(frame: .zero)
         wantsLayer = true
         setupViews()
-        syncBrightness()
+        if !hideBrightness {
+            syncBrightness()
+        }
         syncModes()
     }
 
@@ -291,7 +295,7 @@ private final class FDQuickDisplayBlockView: NSView {
         let sliderHeight: CGFloat = 28
         let titleY: CGFloat = 14
         let brightnessY: CGFloat = 44
-        let modeY: CGFloat = 76
+        let modeY: CGFloat = hideBrightness ? 44 : 76
 
         titleLabel.frame = NSRect(x: sliderX, y: titleY, width: sliderWidth, height: 20)
         brightnessSlider.frame = NSRect(x: sliderX, y: brightnessY, width: sliderWidth, height: sliderHeight)
@@ -321,21 +325,22 @@ private final class FDQuickDisplayBlockView: NSView {
         titleLabel.lineBreakMode = .byTruncatingTail
         addSubview(titleLabel)
 
-        configureOverlayIcon(brightnessIcon, symbolName: "sun.max.fill")
         configureOverlayIcon(modeIcon, symbolName: "rectangle.on.rectangle")
-
-        configureOverlayLabel(brightnessValueLabel)
         configureOverlayLabel(modeValueLabel)
-
-        configureBrightnessSlider()
         configureModeSlider()
+        addSubview(modeSlider)
+        addSubview(modeIcon)
+        addSubview(modeValueLabel)
+
+        guard !hideBrightness else { return }
+
+        configureOverlayIcon(brightnessIcon, symbolName: "sun.max.fill")
+        configureOverlayLabel(brightnessValueLabel)
+        configureBrightnessSlider()
 
         addSubview(brightnessSlider)
-        addSubview(modeSlider)
         addSubview(brightnessIcon)
-        addSubview(modeIcon)
         addSubview(brightnessValueLabel)
-        addSubview(modeValueLabel)
     }
 
     private func configureOverlayIcon(_ icon: NSImageView, symbolName: String) {
@@ -347,9 +352,28 @@ private final class FDQuickDisplayBlockView: NSView {
 
     private func configureOverlayLabel(_ label: NSTextField) {
         label.font = .systemFont(ofSize: 12, weight: .semibold)
-        label.textColor = .secondaryLabelColor
         label.alignment = .right
         label.lineBreakMode = .byTruncatingTail
+    }
+
+    /// Value labels sit on top of the slider bar itself, which is always a hardcoded white/dark
+    /// track regardless of system appearance — a dynamic system color (e.g. secondaryLabelColor)
+    /// can end up nearly invisible in dark mode when the fill happens to reach the label's
+    /// position. Outlining the text keeps it legible over either the white fill or the dark track.
+    private static let overlayTextParagraphStyle: NSParagraphStyle = {
+        let style = NSMutableParagraphStyle()
+        style.alignment = .right
+        return style
+    }()
+
+    private func setOverlayText(_ text: String, on label: NSTextField) {
+        label.attributedStringValue = NSAttributedString(string: text, attributes: [
+            .font: NSFont.systemFont(ofSize: 12, weight: .semibold),
+            .foregroundColor: NSColor.white,
+            .strokeColor: NSColor.black.withAlphaComponent(0.6),
+            .strokeWidth: -3.0,
+            .paragraphStyle: Self.overlayTextParagraphStyle
+        ])
     }
 
     private func configureBrightnessSlider() {
@@ -377,7 +401,7 @@ private final class FDQuickDisplayBlockView: NSView {
     private func syncBrightness() {
         let value = display.brightness.clamped(to: 0...100)
         brightnessSlider.doubleValue = value
-        brightnessValueLabel.stringValue = "\(Int(value.rounded()))%"
+        setOverlayText("\(Int(value.rounded()))%", on: brightnessValueLabel)
         brightnessSlider.needsDisplay = true
     }
 
@@ -391,7 +415,7 @@ private final class FDQuickDisplayBlockView: NSView {
 
         guard !modes.isEmpty else {
             modeSlider.doubleValue = 0
-            modeValueLabel.stringValue = "No HiDPI"
+            setOverlayText("No HiDPI", on: modeValueLabel)
             appliedModeID = 0
             modeSlider.needsDisplay = true
             return
@@ -410,7 +434,7 @@ private final class FDQuickDisplayBlockView: NSView {
 
     private func sendBrightness(force: Bool) {
         let value = brightnessSlider.doubleValue.clamped(to: 0...100)
-        brightnessValueLabel.stringValue = "\(Int(value.rounded()))%"
+        setOverlayText("\(Int(value.rounded()))%", on: brightnessValueLabel)
 
         if !force, Date().timeIntervalSince(lastBrightnessSend) < 0.016 {
             display.brightness = value
@@ -438,7 +462,7 @@ private final class FDQuickDisplayBlockView: NSView {
 
         isSwitchingMode = true
         appliedModeID = mode.id
-        modeValueLabel.stringValue = mode.resolutionString
+        setOverlayText(mode.resolutionString, on: modeValueLabel)
 
         let displayID = display.displayID
         Task { @MainActor in
@@ -488,15 +512,23 @@ private final class FDQuickDisplayBlockView: NSView {
 
     private func updateModeLabel(index: Int) {
         guard modes.indices.contains(index) else {
-            modeValueLabel.stringValue = "No HiDPI"
+            setOverlayText("No HiDPI", on: modeValueLabel)
             return
         }
-        modeValueLabel.stringValue = modes[index].resolutionString
+        setOverlayText(modes[index].resolutionString, on: modeValueLabel)
     }
 
     private static func hidpiModes(for display: DisplayInfo) -> [DisplayMode] {
+        let (nativeWidth, nativeHeight) = display.nativeResolution
+        let nativeAspect = nativeHeight > 0 ? Double(nativeWidth) / Double(nativeHeight) : 0
+
         let filtered = display.availableModes.filter {
-            $0.isHiDPI && $0.width >= 1024 && $0.height >= 576
+            guard $0.isHiDPI, $0.width >= 1024, $0.height >= 576 else { return false }
+            guard nativeAspect > 0 else { return true }
+            let aspect = Double($0.width) / Double($0.height)
+            // Only offer modes that preserve the display's native aspect ratio — scaled modes
+            // with a different ratio would letterbox/stretch rather than cleanly resize.
+            return abs(aspect - nativeAspect) < 0.02
         }
 
         var bestByResolution: [String: DisplayMode] = [:]
@@ -634,15 +666,22 @@ private final class FDQuickSliderCell: NSSliderCell {
     }
 
     private func drawTicks(in rect: NSRect) {
-        guard tickCount > 2 else { return }
+        guard tickCount > 1 else { return }
 
+        // Every step gets a tick (including both ends), each drawn as a small dark ring with a
+        // light center so it stays visible whether it lands on the white fill or the dark track.
         let usableWidth = rect.width - rect.height
-        for index in 1..<(tickCount - 1) {
+        for index in 0..<tickCount {
             let progress = CGFloat(index) / CGFloat(tickCount - 1)
             let x = rect.minX + rect.height / 2 + usableWidth * progress
-            let tick = NSBezierPath(ovalIn: NSRect(x: x - 1.5, y: rect.midY - 1.5, width: 3, height: 3))
-            NSColor.white.withAlphaComponent(0.2).setFill()
-            tick.fill()
+
+            let outer = NSBezierPath(ovalIn: NSRect(x: x - 2.5, y: rect.midY - 2.5, width: 5, height: 5))
+            NSColor.black.withAlphaComponent(0.2).setFill()
+            outer.fill()
+
+            let inner = NSBezierPath(ovalIn: NSRect(x: x - 1.25, y: rect.midY - 1.25, width: 2.5, height: 2.5))
+            NSColor.white.withAlphaComponent(0.6).setFill()
+            inner.fill()
         }
     }
 }
