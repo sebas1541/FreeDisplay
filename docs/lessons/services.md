@@ -89,3 +89,10 @@
 - **解法**: 创建前先 release 旧 assertion；onDisappear 只在 !preventSleep 时 release（保持开关 ON 时持续生效）
 - **教训**: 系统资源（IOPMAssertion、IO iterator 等）必须严格配对 create/release，覆盖 ID 前先 release 旧的
 - **日期**: 2026-03-04
+
+### L-029: 自定义键盘快捷键需要 Input Monitoring 权限，不是 Accessibility
+- **现象**: 用户设置了自定义亮度快捷键（如 Cmd+↑），按下后没有任何反应，看起来像是"系统快捷键优先级更高"
+- **原因**: BrightnessKeyService 的 CGEventTap 同时监听 `.keyDown`/`.keyUp`（不只是媒体键的 NSSystemDefined 事件）；macOS 10.15+ 对监听原始键盘事件的 event tap 要求 **Input Monitoring** 权限（`IOHIDCheckAccess(kIOHIDRequestTypeListenEvent)`），和控制其他 App 用的 Accessibility 权限是两码事。权限缺失时 `CGEvent.tapCreate` 直接返回 nil，之前的代码只在 console 打一行日志，UI 上完全无感知，用户会误以为是系统抢了优先级，实际上是我们的 tap 根本没装上
+- **解法**: `start()` 里先调 `IOHIDCheckAccess`，状态为 `.unknown` 时用 `IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)` 主动弹系统权限框；状态已是 `.denied`（例如反复用 ad-hoc 签名重新构建触发过一次拒绝）时系统不会再弹框，只能引导用户去 系统设置 → 隐私与安全性 → 输入监控 手动开启（或自己在终端跑 `tccutil reset ListenEvent <bundle-id>` 清掉旧记录）；BrightnessKeyService 新增 `@Published var inputMonitoringStatus`，Settings 页在快捷键开启但权限未授予时显示提示条 + "Open Settings" 按钮深链到该设置页
+- **教训**: 任何监听全局键盘事件（而非只发送/合成事件）的 CGEventTap 都要检查 Input Monitoring，而不是想当然地用 AXIsProcessTrusted；权限缺失必须有用户可见的 UI 反馈，不能只写 console log，否则用户无法自助排查
+- **日期**: 2026-07-05

@@ -50,8 +50,6 @@ final class DDCService: ObservableObject, @unchecked Sendable {
 #if arch(arm64)
     private var avServiceCache: [CGDirectDisplayID: IOAVServiceRef] = [:]
     private let avServiceLock = NSLock()
-    /// Ordered list of all working external AVServices found during last enumeration.
-    private var allExternalAVServices: [IOAVServiceRef] = []
 #endif
 
     private init() {}
@@ -59,76 +57,201 @@ final class DDCService: ObservableObject, @unchecked Sendable {
     // MARK: - ARM64 IOAVService Path
 
 #if arch(arm64)
-    // MARK: - ARM64 IORegistry-based AVService matching
+    // MARK: - ARM64 EDID-based AVService matching
+    //
+    // Ported from MonitorControl's Arm64DDC matching algorithm. Each DCPAVServiceProxy node is
+    // paired with the EDID captured from the framebuffer node (AppleCLCD2 / IOMobileFramebufferShim)
+    // that immediately precedes it in IORegistry traversal order (framebuffers always enumerate
+    // before their AVService child), then scored against CoreDisplay's authoritative EDID
+    // dictionary for each CGDirectDisplayID. This replaces comparing CGDisplayVendorNumber/
+    // CGDisplayModelNumber against an ancestor-chain walk, which is unreliable for some monitors
+    // and can silently swap DDC targets when 2+ external displays are connected.
 
     /// Mapping warning exposed to UI when more than one external display is connected
-    /// and we fall back to index-based AVService assignment.
+    /// and no EDID match could be found for one or more of them.
     @Published var mappingWarning: String? = nil
 
-    /// Attempts to match an IOAVService (DCPAVServiceProxy) to a CGDirectDisplayID by
-    /// comparing IORegistry properties against CoreGraphics display attributes.
-    ///
-    /// Matching strategy (in order of reliability):
-    ///   1. Walk up the IORegistry parent chain from the DCPAVServiceProxy node to find a node
-    ///      that has both "DisplayVendorID" and "DisplayProductID", then compare against
-    ///      CGDisplayVendorNumber / CGDisplayModelNumber for each external display.
-    ///   2. If no vendor/product match is found, fall back to sorted-index assignment and
-    ///      emit a console warning (and set mappingWarning if >1 external display).
-    ///
-    /// Returns a dictionary mapping each matched external CGDirectDisplayID to its AVService.
-    private func buildAVServiceMap(
-        workingServices: [(service: IOAVServiceRef, ioEntry: io_service_t)]
-    ) -> [CGDirectDisplayID: IOAVServiceRef] {
-        // Collect all external display IDs
-        var displayCount: UInt32 = 0
-        CGGetOnlineDisplayList(0, nil, &displayCount)
-        var displayIDs = [CGDirectDisplayID](repeating: 0, count: Int(displayCount))
-        CGGetOnlineDisplayList(displayCount, &displayIDs, &displayCount)
-        let externalIDs = (0..<Int(displayCount))
-            .map { displayIDs[$0] }
-            .filter { CGDisplayIsBuiltin($0) == 0 }
+    private struct EDIDCandidate {
+        var edidUUID: String = ""
+        var ioDisplayLocation: String = ""
+        var productName: String = ""
+        var serialNumber: Int64 = 0
+        var service: IOAVServiceRef?
+        var serviceLocation: Int = 0
+    }
 
-        guard !externalIDs.isEmpty else { return [:] }
+    /// dlsym-loaded CoreDisplay private API: returns the authoritative EDID-derived
+    /// info dictionary for a display (vendor/product IDs, manufacture date, image size, etc).
+    /// Loaded at runtime (never linked) per project convention for private frameworks.
+    private static let coreDisplayInfoDictionary: (@convention(c) (CGDirectDisplayID) -> Unmanaged<CFDictionary>?)? = {
+        guard let handle = dlopen("/System/Library/Frameworks/CoreDisplay.framework/CoreDisplay", RTLD_LAZY) else { return nil }
+        guard let sym = dlsym(handle, "CoreDisplay_DisplayCreateInfoDictionary") else { return nil }
+        return unsafeBitCast(sym, to: (@convention(c) (CGDirectDisplayID) -> Unmanaged<CFDictionary>?).self)
+    }()
 
-        var result: [CGDirectDisplayID: IOAVServiceRef] = [:]
-        var unmatchedServices: [(service: IOAVServiceRef, ioEntry: io_service_t)] = []
+    /// Walks the whole IOService registry once, in registration order, pairing each
+    /// DCPAVServiceProxy node with the EDID/location/product info captured from the framebuffer
+    /// node (AppleCLCD2 / IOMobileFramebufferShim) that precedes it.
+    private func collectEDIDCandidates() -> [EDIDCandidate] {
+        var iterator: io_iterator_t = 0
+        guard IORegistryEntryCreateIterator(
+            IORegistryGetRootEntry(kIOMainPortDefault),
+            "IOService",
+            IOOptionBits(kIORegistryIterateRecursively),
+            &iterator
+        ) == KERN_SUCCESS else { return [] }
+        defer { IOObjectRelease(iterator) }
 
-        // Strategy 1: IORegistry property matching
-        for entry in workingServices {
-            guard let matched = matchAVServiceToDisplay(
-                ioEntry: entry.ioEntry,
-                candidates: externalIDs,
-                alreadyMapped: Set(result.keys)
-            ) else {
-                unmatchedServices.append(entry)
-                continue
+        let framebufferNames: Set<String> = ["AppleCLCD2", "IOMobileFramebufferShim"]
+        let nameBuf = UnsafeMutablePointer<CChar>.allocate(capacity: MemoryLayout<io_name_t>.size)
+        defer { nameBuf.deallocate() }
+
+        var serviceLocation = 0
+        var pending = EDIDCandidate()
+        var candidates: [EDIDCandidate] = []
+
+        var entry = IOIteratorNext(iterator)
+        while entry != IO_OBJECT_NULL {
+            defer {
+                IOObjectRelease(entry)
+                entry = IOIteratorNext(iterator)
             }
-            result[matched] = entry.service
-            #if DEBUG
-            print("[DDCService] ARM64: IORegistry matched AVService to display \(matched) (vendor/product)")
-            #endif
+            guard IORegistryEntryGetName(entry, nameBuf) == KERN_SUCCESS else { continue }
+            let name = String(cString: nameBuf)
+
+            if framebufferNames.contains(name) {
+                serviceLocation += 1
+                pending = EDIDCandidate(serviceLocation: serviceLocation)
+
+                if let edidUUID = IORegistryEntryCreateCFProperty(
+                    entry, "EDID UUID" as CFString, kCFAllocatorDefault, IOOptionBits(kIORegistryIterateRecursively)
+                )?.takeRetainedValue() as? String {
+                    pending.edidUUID = edidUUID
+                }
+
+                let pathBuf = UnsafeMutablePointer<CChar>.allocate(capacity: MemoryLayout<io_string_t>.size)
+                defer { pathBuf.deallocate() }
+                if IORegistryEntryGetPath(entry, kIOServicePlane, pathBuf) == KERN_SUCCESS {
+                    pending.ioDisplayLocation = String(cString: pathBuf)
+                }
+
+                if let attrs = IORegistryEntryCreateCFProperty(
+                    entry, "DisplayAttributes" as CFString, kCFAllocatorDefault, IOOptionBits(kIORegistryIterateRecursively)
+                )?.takeRetainedValue() as? NSDictionary,
+                   let productAttrs = attrs["ProductAttributes"] as? NSDictionary {
+                    if let productName = productAttrs["ProductName"] as? String {
+                        pending.productName = productName
+                    }
+                    if let serial = productAttrs["SerialNumber"] as? Int64 {
+                        pending.serialNumber = serial
+                    }
+                }
+            } else if name == "DCPAVServiceProxy" {
+                guard let location = IORegistryEntryCreateCFProperty(
+                    entry, "Location" as CFString, kCFAllocatorDefault, IOOptionBits(kIORegistryIterateRecursively)
+                )?.takeRetainedValue() as? String, location == "External" else { continue }
+                guard let avService = IOAVServiceCreateWithService(kCFAllocatorDefault, entry) else { continue }
+                var candidate = pending
+                candidate.service = avService
+                candidates.append(candidate)
+            }
+        }
+        return candidates
+    }
+
+    /// Scores how well an EDID candidate (from IORegistry) matches a CGDirectDisplayID, using
+    /// CoreDisplay's structured EDID dictionary as ground truth. Higher is better; 0 = no match.
+    private func edidMatchScore(displayID: CGDirectDisplayID, candidate: EDIDCandidate) -> Int {
+        guard let dictFn = Self.coreDisplayInfoDictionary,
+              let dict = dictFn(displayID)?.takeRetainedValue() as NSDictionary? else { return 0 }
+
+        var score = 0
+
+        if !candidate.ioDisplayLocation.isEmpty,
+           let location = dict[kIODisplayLocationKey] as? String,
+           location == candidate.ioDisplayLocation {
+            score += 10
         }
 
-        // Strategy 2: Index fallback for any remaining unmatched services/displays
-        let unmappedIDs = externalIDs.filter { result[$0] == nil }.sorted()
-        if !unmatchedServices.isEmpty && !unmappedIDs.isEmpty {
-            if unmappedIDs.count > 1 {
-                let warning = "Multiple external displays: DDC may target wrong monitor (IORegistry matching failed)"
-                #if DEBUG
-                print("[DDCService] WARNING: \(warning)")
-                #endif
-                DispatchQueue.main.async { self.mappingWarning = warning }
-            } else {
-                DispatchQueue.main.async { self.mappingWarning = nil }
-            }
-            for (idx, extID) in unmappedIDs.enumerated() {
-                if idx < unmatchedServices.count {
-                    result[extID] = unmatchedServices[idx].service
-                    #if DEBUG
-                    print("[DDCService] ARM64: index fallback mapped AVService[\(idx)] to display \(extID)")
-                    #endif
+        if !candidate.productName.isEmpty,
+           let nameList = dict["DisplayProductName"] as? [String: String],
+           let name = nameList["en_US"] ?? nameList.first?.value,
+           name.lowercased() == candidate.productName.lowercased() {
+            score += 1
+        }
+
+        if candidate.serialNumber != 0,
+           let serial = dict[kDisplaySerialNumber] as? Int64,
+           serial == candidate.serialNumber {
+            score += 1
+        }
+
+        if let year = dict[kDisplayYearOfManufacture] as? Int64,
+           let week = dict[kDisplayWeekOfManufacture] as? Int64,
+           let vendor = dict[kDisplayVendorID] as? Int64,
+           let product = dict[kDisplayProductID] as? Int64,
+           let vSize = dict[kDisplayVerticalImageSize] as? Int64,
+           let hSize = dict[kDisplayHorizontalImageSize] as? Int64 {
+            let edidUUID = candidate.edidUUID
+            // (hex key, byte offset within the raw "EDID UUID" registry string)
+            let fields: [(key: String, loc: Int)] = [
+                (String(format: "%04x", UInt16(clamping: vendor)).uppercased(), 0),
+                (String(format: "%02x", UInt8(clamping: product & 0xFF))
+                    .appending(String(format: "%02x", UInt8(clamping: (product >> 8) & 0xFF))).uppercased(), 4),
+                (String(format: "%02x", UInt8(clamping: week))
+                    .appending(String(format: "%02x", UInt8(clamping: year - 1990))).uppercased(), 19),
+                (String(format: "%02x", UInt8(clamping: hSize / 10))
+                    .appending(String(format: "%02x", UInt8(clamping: vSize / 10))).uppercased(), 30),
+            ]
+            for field in fields where field.key != "0000" {
+                guard let start = edidUUID.index(edidUUID.startIndex, offsetBy: field.loc, limitedBy: edidUUID.endIndex),
+                      let end = edidUUID.index(start, offsetBy: 4, limitedBy: edidUUID.endIndex) else { continue }
+                if edidUUID[start..<end] == field.key {
+                    score += 1
                 }
             }
+        }
+
+        return score
+    }
+
+    /// Greedily assigns each external display the highest-scoring, not-yet-taken EDID candidate.
+    private func buildAVServiceMap(displayIDs: [CGDirectDisplayID]) -> [CGDirectDisplayID: IOAVServiceRef] {
+        let candidates = collectEDIDCandidates()
+        guard !candidates.isEmpty else { return [:] }
+
+        var scoredPairs: [(displayID: CGDirectDisplayID, candidate: EDIDCandidate, score: Int)] = []
+        for displayID in displayIDs {
+            for candidate in candidates {
+                let score = edidMatchScore(displayID: displayID, candidate: candidate)
+                guard score > 0 else { continue }
+                scoredPairs.append((displayID, candidate, score))
+            }
+        }
+
+        var result: [CGDirectDisplayID: IOAVServiceRef] = [:]
+        var takenLocations: Set<Int> = []
+        var takenDisplayIDs: Set<CGDirectDisplayID> = []
+        for pair in scoredPairs.sorted(by: { $0.score > $1.score }) {
+            guard !takenDisplayIDs.contains(pair.displayID),
+                  !takenLocations.contains(pair.candidate.serviceLocation),
+                  let service = pair.candidate.service else { continue }
+            result[pair.displayID] = service
+            takenDisplayIDs.insert(pair.displayID)
+            takenLocations.insert(pair.candidate.serviceLocation)
+        }
+
+        let unmatchedIDs = displayIDs.filter { !takenDisplayIDs.contains($0) }
+        let leftoverCandidates = candidates.filter { !takenLocations.contains($0.serviceLocation) }
+        if unmatchedIDs.count == 1, leftoverCandidates.count == 1, let service = leftoverCandidates[0].service {
+            // Unambiguous: exactly one unmatched display and one leftover candidate.
+            result[unmatchedIDs[0]] = service
+        } else if unmatchedIDs.count > 1 {
+            let warning = "Multiple external displays: DDC may target wrong monitor (EDID matching failed)"
+            #if DEBUG
+            print("[DDCService] WARNING: \(warning)")
+            #endif
+            DispatchQueue.main.async { self.mappingWarning = warning }
         } else {
             DispatchQueue.main.async { self.mappingWarning = nil }
         }
@@ -136,75 +259,9 @@ final class DDCService: ObservableObject, @unchecked Sendable {
         return result
     }
 
-    /// Walks up the IORegistry parent chain from `ioEntry` looking for a node
-    /// that has both "DisplayVendorID" and "DisplayProductID" properties.
-    /// Returns the CGDirectDisplayID from `candidates` whose vendor+model matches,
-    /// excluding any IDs already in `alreadyMapped`.
-    private func matchAVServiceToDisplay(
-        ioEntry: io_service_t,
-        candidates: [CGDirectDisplayID],
-        alreadyMapped: Set<CGDirectDisplayID>
-    ) -> CGDirectDisplayID? {
-        // Build the ancestor chain (up to 8 levels) including the entry itself
-        var chain: [io_service_t] = []
-        var current = ioEntry
-        IOObjectRetain(current)
-        chain.append(current)
-
-        for _ in 0..<7 {
-            var parent: io_service_t = 0
-            guard IORegistryEntryGetParentEntry(current, kIOServicePlane, &parent) == KERN_SUCCESS,
-                  parent != IO_OBJECT_NULL else { break }
-            chain.append(parent)
-            current = parent
-        }
-        defer { chain.forEach { IOObjectRelease($0) } }
-
-        for node in chain {
-            guard let cfProps = ioRegistryEntryProperties(node) else { continue }
-            let props = cfProps.takeRetainedValue() as? [String: Any] ?? [:]
-
-            // Extract vendor and product IDs from this node
-            let nodeVendor: UInt32?
-            let nodeProduct: UInt32?
-
-            if let v = props["DisplayVendorID"] as? UInt32 { nodeVendor = v }
-            else if let v = props["DisplayVendorID"] as? Int { nodeVendor = UInt32(bitPattern: Int32(truncatingIfNeeded: v)) }
-            else { nodeVendor = nil }
-
-            if let p = props["DisplayProductID"] as? UInt32 { nodeProduct = p }
-            else if let p = props["DisplayProductID"] as? Int { nodeProduct = UInt32(bitPattern: Int32(truncatingIfNeeded: p)) }
-            else { nodeProduct = nil }
-
-            guard let vendor = nodeVendor, let product = nodeProduct else { continue }
-
-            // Find a candidate display whose vendor+model matches
-            for dispID in candidates {
-                guard !alreadyMapped.contains(dispID) else { continue }
-                if CGDisplayVendorNumber(dispID) == vendor && CGDisplayModelNumber(dispID) == product {
-                    return dispID
-                }
-            }
-        }
-
-        return nil
-    }
-
-    /// Wraps IORegistryEntryCreateCFProperties to return an optional Unmanaged<CFDictionary>.
-    private func ioRegistryEntryProperties(_ entry: io_service_t) -> Unmanaged<CFDictionary>? {
-        var props: Unmanaged<CFMutableDictionary>? = nil
-        let kr = IORegistryEntryCreateCFProperties(entry, &props, kCFAllocatorDefault, 0)
-        guard kr == KERN_SUCCESS, let p = props else { return nil }
-        // CFMutableDictionary is toll-free bridged to CFDictionary
-        return unsafeBitCast(p, to: Unmanaged<CFDictionary>.self)
-    }
-
     /// Finds the IOAVService for the given display. Caches the result per display.
     /// Returns nil if no working AVService is found (built-in displays, or displays
     /// that don't support DDC over the Apple Silicon AV path).
-    ///
-    /// Matching strategy: IORegistry vendor/product property matching first,
-    /// falling back to sorted-index assignment if properties are unavailable.
     private func findAVService(for displayID: CGDirectDisplayID) -> IOAVServiceRef? {
         // Fast path: return cached service if present
         avServiceLock.lock()
@@ -214,91 +271,34 @@ final class DDCService: ObservableObject, @unchecked Sendable {
         }
         avServiceLock.unlock()
 
-        // Slow path: enumerate all DCPAVServiceProxy nodes in the IOKit registry.
-        // Double-checked locking: another thread may have filled the cache between
-        // the fast-path unlock and now, so we re-check inside the lock at the end
-        // before writing results.
-        var iterator: io_iterator_t = 0
-        guard IOServiceGetMatchingServices(
-            kIOMainPortDefault,
-            IOServiceMatching("DCPAVServiceProxy"),
-            &iterator
-        ) == KERN_SUCCESS else { return nil }
-        defer { IOObjectRelease(iterator) }
+        var displayCount: UInt32 = 0
+        CGGetOnlineDisplayList(0, nil, &displayCount)
+        var displayIDs = [CGDirectDisplayID](repeating: 0, count: Int(displayCount))
+        CGGetOnlineDisplayList(displayCount, &displayIDs, &displayCount)
+        let externalIDs = (0..<Int(displayCount))
+            .map { displayIDs[$0] }
+            .filter { CGDisplayIsBuiltin($0) == 0 }
+        guard !externalIDs.isEmpty else { return nil }
 
-        // Collect (AVService, io_service_t) pairs for IORegistry property matching.
-        // We retain each io_service_t so we can walk its parent chain after the iterator moves on.
-        var workingPairs: [(service: IOAVServiceRef, ioEntry: io_service_t)] = []
+        let serviceMap = buildAVServiceMap(displayIDs: externalIDs)
 
-        var service = IOIteratorNext(iterator)
-        while service != IO_OBJECT_NULL {
-            // Only consider external displays
-            if let locationProp = IORegistryEntryCreateCFProperty(
-                service, "Location" as CFString, kCFAllocatorDefault, 0
-            )?.takeRetainedValue() as? String {
-                guard locationProp == "External" else {
-                    IOObjectRelease(service)
-                    service = IOIteratorNext(iterator)
-                    continue
-                }
-            }
-            // Note: some drivers omit the "Location" key entirely; still attempt those.
-
-            guard let avService = IOAVServiceCreateWithService(kCFAllocatorDefault, service) else {
-                IOObjectRelease(service)
-                service = IOIteratorNext(iterator)
-                continue
-            }
-
-            // Verify the service responds to I2C reads (confirms it's a usable DDC path)
-            var testBuf = [UInt8](repeating: 0, count: 32)
-            let ret = IOAVServiceReadI2C(avService, 0x37, 0x51, &testBuf, 32)
-            if ret == kIOReturnSuccess {
-                // Retain io_service_t so we can walk its parent chain in buildAVServiceMap
-                IOObjectRetain(service)
-                workingPairs.append((service: avService, ioEntry: service))
-            }
-            IOObjectRelease(service)
-            service = IOIteratorNext(iterator)
-        }
-
-        guard !workingPairs.isEmpty else {
-            #if DEBUG
-            print("[DDCService] ARM64: no IOAVService found for display \(displayID)")
-            #endif
-            return nil
-        }
-
-        // Build the display->AVService map using IORegistry matching
-        let serviceMap = buildAVServiceMap(workingServices: workingPairs)
-
-        // Release the retained io_service_t entries now that mapping is done
-        for pair in workingPairs {
-            IOObjectRelease(pair.ioEntry)
-        }
-
-        // Re-check cache (double-checked locking) in case another thread enumerated
-        // and populated the cache while we were enumerating without the lock held.
+        // Double-checked locking: another thread may have populated the cache while we
+        // were walking the IORegistry without the lock held.
         avServiceLock.lock()
-        if let cached = avServiceCache[displayID] {
-            avServiceLock.unlock()
-            return cached
-        }
-        allExternalAVServices = workingPairs.map { $0.service }
+        defer { avServiceLock.unlock() }
+        if let cached = avServiceCache[displayID] { return cached }
         for (extID, avService) in serviceMap {
             avServiceCache[extID] = avService
         }
-        let result = avServiceCache[displayID]
-        avServiceLock.unlock()
 
         #if DEBUG
-        if result != nil {
-            print("[DDCService] ARM64: found IOAVService for display \(displayID)")
+        if avServiceCache[displayID] != nil {
+            print("[DDCService] ARM64: found IOAVService for display \(displayID) via EDID match")
         } else {
             print("[DDCService] ARM64: no IOAVService found for display \(displayID)")
         }
         #endif
-        return result
+        return avServiceCache[displayID]
     }
 
     /// Invalidates the cached IOAVService for the given display (e.g. after display reconnect).

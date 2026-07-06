@@ -44,6 +44,15 @@
 - **教训**: async 化只对真正慢的操作（>100ms）有价值。对微秒级操作做 async 反而引入复杂性和 bug
 - **日期**: 2026-03-03
 
+## Apple Silicon DDC AVService 匹配（Phase 23）
+
+### L-028: CGDisplayVendorNumber/ModelNumber 匹配 DCPAVServiceProxy 同样不可靠（L-003 的另一次复发）
+- **现象**: 2 台外接显示器时，"LG ULTRAGEAR+" 的亮度滑块无效，反而是显示为 "Display 2"（EDID 无友好名称的第二台显示器）的滑块控制了 LG 的实际亮度
+- **原因**: DDCService.findAVService 沿 DCPAVServiceProxy 的 IORegistry 父链上溯，比较 `CGDisplayVendorNumber`/`CGDisplayModelNumber` 找匹配；这和 L-003 是同一个反模式（不同框架的 vendor/model 标识符不保证一致），只是这次出现在 AVService 匹配而非 DisplayInfo 命名上，说明这个坑在任何"用 CGDisplayVendorNumber/ModelNumber 匹配 IOKit 服务"的地方都可能复发
+- **解法**: 移植 MonitorControl 的 Arm64DDC 匹配算法——遍历整个 IOService registry，把每个 DCPAVServiceProxy 和它前面紧邻的 framebuffer 节点（AppleCLCD2/IOMobileFramebufferShim）配对取得 EDID/产品名/序列号，再用 `CoreDisplay_DisplayCreateInfoDictionary`（dlopen 动态加载，同 CLAUDE.md 私有框架规则）取得每个 CGDirectDisplayID 的权威 EDID 字典打分匹配，贪心分配最高分且未占用的候选
+- **教训**: 只要看到 CGDisplayVendorNumber/CGDisplayModelNumber 被用来匹配任何 IOKit 服务（不只是 IODisplayConnect），都要怀疑其可靠性；EDID 内容比对（含厂商/日期/尺寸多字段）比单纯 vendor+model 两个整数更抗碰撞
+- **日期**: 2026-07-05
+
 ## Apple Silicon DDC（Phase 17）
 
 ### L-005: IOFramebuffer I2C API 在 Apple Silicon 上完全不工作

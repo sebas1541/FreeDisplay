@@ -660,6 +660,7 @@ private extension Comparable {
 struct SettingsView: View {
     @EnvironmentObject private var displayManager: DisplayManager
     @ObservedObject private var settings = SettingsService.shared
+    @ObservedObject private var brightnessKeys = BrightnessKeyService.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -781,6 +782,28 @@ struct SettingsView: View {
                         set: { settings.brightnessDecreaseShortcut = $0 }
                     )
                 )
+
+                if brightnessKeys.inputMonitoringStatus != kIOHIDAccessTypeGranted {
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundColor(.orange)
+                            .frame(width: 16)
+                            .accessibilityHidden(true)
+                        Text("Shortcuts won't fire until Input Monitoring access is granted — the OS keeps handling the key combo otherwise.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                        Button("Open Settings") {
+                            BrightnessKeyService.shared.start()
+                            BrightnessKeyService.openInputMonitoringSettings()
+                        }
+                        .buttonStyle(.borderless)
+                        .font(.caption)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 2)
+                }
             }
 
             // Check for updates at launch

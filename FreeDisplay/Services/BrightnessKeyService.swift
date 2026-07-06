@@ -1,5 +1,6 @@
 import AppKit
 import CoreGraphics
+import IOKit.hidsystem
 
 // MARK: - C Event Tap Callback
 
@@ -23,11 +24,17 @@ private func brightnessKeyEventCallback(
 /// display's brightness is adjusted via BrightnessService. When the cursor is on the
 /// built-in display the event is passed through so macOS adjusts it normally.
 @MainActor
-final class BrightnessKeyService: @unchecked Sendable {
+final class BrightnessKeyService: ObservableObject, @unchecked Sendable {
     static let shared = BrightnessKeyService()
     private init() {}
 
     // MARK: - Private State
+
+    /// Whether this process currently has Input Monitoring access — required for the
+    /// CGEventTap to receive keyDown/keyUp events (macOS 10.15+). Without it `CGEvent.tapCreate`
+    /// fails outright, which is why custom keyboard shortcuts silently never fire: nothing
+    /// intercepts the key combo, so whatever the system (or the focused app) does with it "wins".
+    @Published private(set) var inputMonitoringStatus: IOHIDAccessType = IOHIDCheckAccess(kIOHIDRequestTypeListenEvent)
 
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
@@ -74,6 +81,8 @@ final class BrightnessKeyService: @unchecked Sendable {
     func start() {
         guard eventTap == nil else { return }
 
+        requestInputMonitoringAccessIfNeeded()
+
         // Try creating the tap directly — AXIsProcessTrusted can be unreliable
         // with ad-hoc signed Debug builds (TCC entry invalidates after each rebuild).
         let retained = Unmanaged.passRetained(self)
@@ -97,7 +106,8 @@ final class BrightnessKeyService: @unchecked Sendable {
         guard let tap else {
             retained.release()
             selfRetained = nil
-            NSLog("[BrightnessKeyService] Event tap creation failed — no accessibility permission")
+            inputMonitoringStatus = IOHIDCheckAccess(kIOHIDRequestTypeListenEvent)
+            NSLog("[BrightnessKeyService] Event tap creation failed — no Input Monitoring permission")
             pollForAccessibility()
             return
         }
@@ -108,8 +118,25 @@ final class BrightnessKeyService: @unchecked Sendable {
 
         self.eventTap = tap
         self.runLoopSource = source
+        self.inputMonitoringStatus = kIOHIDAccessTypeGranted
 
         NSLog("[BrightnessKeyService] Event tap installed successfully")
+    }
+
+    /// Shows the system's Input Monitoring prompt exactly once (macOS only offers it while the
+    /// status is still "unknown" — once denied, the user must flip it on manually in System
+    /// Settings, which `openInputMonitoringSettings()` deep-links to).
+    private func requestInputMonitoringAccessIfNeeded() {
+        guard IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) == kIOHIDAccessTypeUnknown else { return }
+        // Blocks until the user responds to the system prompt.
+        _ = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
+        inputMonitoringStatus = IOHIDCheckAccess(kIOHIDRequestTypeListenEvent)
+    }
+
+    /// Deep-links to System Settings → Privacy & Security → Input Monitoring.
+    static func openInputMonitoringSettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent") else { return }
+        NSWorkspace.shared.open(url)
     }
 
     private nonisolated static func makeEventTap(
