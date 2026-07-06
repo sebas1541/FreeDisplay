@@ -173,20 +173,22 @@ final class BrightnessService: @unchecked Sendable {
                 command: DDCService.brightnessVCP
             ) { [weak self] result in
                 guard let self else { return }
-                if let result = result, result.max > 0 {
-                    let brightness = Double(result.current) / Double(result.max) * 100.0
-                    self.ddcAvailableLock.lock()
-                    self.ddcAvailable[displayID] = true
-                    self.ddcMaxBrightness[displayID] = result.max
-                    self.ddcAvailableLock.unlock()
-                    Task { @MainActor in display.brightness = brightness }
-                } else {
-                    // DDC read returned nil; mark unavailable
-                    self.ddcAvailableLock.lock()
-                    if self.ddcAvailable[displayID] == nil {
-                        self.ddcAvailable[displayID] = false
+                Task { @MainActor in
+                    if let result = result, result.max > 0 {
+                        let brightness = Double(result.current) / Double(result.max) * 100.0
+                        self.ddcAvailableLock.withLock {
+                            self.ddcAvailable[displayID] = true
+                            self.ddcMaxBrightness[displayID] = result.max
+                        }
+                        display.brightness = brightness
+                    } else {
+                        // DDC read returned nil; mark unavailable
+                        self.ddcAvailableLock.withLock {
+                            if self.ddcAvailable[displayID] == nil {
+                                self.ddcAvailable[displayID] = false
+                            }
+                        }
                     }
-                    self.ddcAvailableLock.unlock()
                 }
             }
         }
@@ -235,17 +237,16 @@ final class BrightnessService: @unchecked Sendable {
                 value: ddcValue
             ) { [weak self] success in
                 guard let self else { return }
-                if success {
-                    self.ddcAvailableLock.withLock { self.ddcAvailable[displayID] = true }
-                } else {
-                    self.ddcAvailableLock.withLock { self.ddcAvailable[displayID] = false }
-                    // Apply gamma-based software brightness as fallback (must be on main thread)
-                    DispatchQueue.main.async { [weak self] in
-                        self?.setSoftwareBrightness(clamped, for: displayID)
+                Task { @MainActor in
+                    if success {
+                        self.ddcAvailableLock.withLock { self.ddcAvailable[displayID] = true }
+                    } else {
+                        self.ddcAvailableLock.withLock { self.ddcAvailable[displayID] = false }
+                        self.setSoftwareBrightness(clamped, for: displayID)
+                        #if DEBUG
+                        print("[BrightnessService] DDC unavailable for display \(displayID), using software fallback")
+                        #endif
                     }
-                    #if DEBUG
-                    print("[BrightnessService] DDC unavailable for display \(displayID), using software fallback")
-                    #endif
                 }
             }
         }
@@ -316,17 +317,17 @@ final class BrightnessService: @unchecked Sendable {
                         value: ddcValue
                     ) { [weak self] success in
                         guard let self else { return }
-                        if success {
-                            self.ddcAvailableLock.withLock { self.ddcAvailable[displayID] = true }
-                        } else if isLast {
-                            // DDC failed — mark unavailable and apply software fallback
-                            self.ddcAvailableLock.withLock { self.ddcAvailable[displayID] = false }
-                            DispatchQueue.main.async { [weak self] in
-                                self?.setSoftwareBrightness(clamped, for: displayID)
+                        Task { @MainActor in
+                            if success {
+                                self.ddcAvailableLock.withLock { self.ddcAvailable[displayID] = true }
+                            } else if isLast {
+                                // DDC failed — mark unavailable and apply software fallback
+                                self.ddcAvailableLock.withLock { self.ddcAvailable[displayID] = false }
+                                self.setSoftwareBrightness(clamped, for: displayID)
+                                #if DEBUG
+                                print("[BrightnessService] smooth DDC failed for \(displayID), using software fallback")
+                                #endif
                             }
-                            #if DEBUG
-                            print("[BrightnessService] smooth DDC failed for \(displayID), using software fallback")
-                            #endif
                         }
                     }
                 }
