@@ -37,7 +37,7 @@ final class BrightnessAnimator: @unchecked Sendable {
     ) {
         cancel()
 
-        // If from ≈ to, no animation needed — just apply final value.
+        // If from about  to, no animation needed — just apply final value.
         guard abs(to - from) > 0.001, steps > 1 else {
             handler(to, true)
             return
@@ -105,7 +105,7 @@ final class BrightnessService: @unchecked Sendable {
 
     // MARK: - Software Brightness Factors
 
-    /// Stores the current software brightness factor per display (0.01–1.0).
+    /// Stores the current software brightness factor per display (0.01-1.0).
     private var softwareBrightnessFactors: [CGDirectDisplayID: Double] = [:]
     private let softwareBrightnessLock = NSLock()
 
@@ -138,7 +138,7 @@ final class BrightnessService: @unchecked Sendable {
     private let ddcAvailableLock = NSLock()
 
     /// Per-display DDC max brightness value reported by the monitor.
-    /// Used to denormalize 0–100% into the display's native DDC range.
+    /// Used to denormalize 0-100% into the display's native DDC range.
     private var ddcMaxBrightness: [CGDirectDisplayID: UInt16] = [:]
 
     // MARK: - Public API
@@ -256,7 +256,7 @@ final class BrightnessService: @unchecked Sendable {
     /// Animate brightness from the display's current value to `targetBrightness` smoothly.
     ///
     /// - For DDC displays: sends 5 DDC commands spaced ~40ms apart (200ms total).
-    ///   DDC I2C commands are inherently slow (~40–50ms each), so 5 steps at 40ms intervals
+    ///   DDC I2C commands are inherently slow (~40-50ms each), so 5 steps at 40ms intervals
     ///   fills the 200ms window without flooding the bus.
     /// - For software (gamma) brightness: 8 gamma table updates over 200ms give a visibly
     ///   smooth fade without perceptible frame drops.
@@ -338,7 +338,7 @@ final class BrightnessService: @unchecked Sendable {
 
     /// Applies brightness via gamma table manipulation for displays where DDC is unavailable.
     /// Uses a linear ramp from 0 to `factor` so white level is dimmed while black stays black.
-    /// brightness: 0–100 (percentage); never goes fully to 0 to avoid a completely black screen.
+    /// brightness: 0-100 (percentage); never goes fully to 0 to avoid a completely black screen.
     ///
     /// If GammaService has an active adjustment for this display, it delegates to GammaService
     /// so the two do not overwrite each other's CGSetDisplayTransfer* call.

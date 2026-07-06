@@ -23,7 +23,7 @@ final class MirrorService: @unchecked Sendable {
     // MARK: - Enable
 
     /// Makes `target` mirror `source`.
-    /// The entire Begin→Mirror→Complete transaction runs inside `CGHelpers.runWithTimeout`
+    /// The entire Begin->Mirror->Complete transaction runs inside `CGHelpers.runWithTimeout`
     /// so `CGCompleteDisplayConfiguration` cannot block indefinitely on WindowServer IPC.
     /// - Returns: true on success.
     @discardableResult
@@ -70,7 +70,7 @@ final class MirrorService: @unchecked Sendable {
     // MARK: - Disable
 
     /// Stops `displayID` from mirroring.
-    /// The entire Begin→Mirror→Complete transaction runs inside `CGHelpers.runWithTimeout`
+    /// The entire Begin->Mirror->Complete transaction runs inside `CGHelpers.runWithTimeout`
     /// so `CGCompleteDisplayConfiguration` cannot block indefinitely on WindowServer IPC.
     /// - Returns: true on success.
     @discardableResult

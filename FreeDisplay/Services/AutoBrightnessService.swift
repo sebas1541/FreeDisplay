@@ -2,7 +2,7 @@ import Foundation
 import IOKit
 import CoreGraphics
 
-// CoreDisplay private API — reads the user-set brightness of a display (0.0–1.0).
+// CoreDisplay private API — reads the user-set brightness of a display (0.0-1.0).
 // Loaded via dlsym at runtime to avoid linking against the private CoreDisplay framework.
 private let _CoreDisplay_GetBrightness: (@convention(c) (CGDirectDisplayID) -> Double)? = {
     guard let handle = dlopen("/System/Library/Frameworks/CoreDisplay.framework/CoreDisplay", RTLD_LAZY) else { return nil }
@@ -32,12 +32,12 @@ final class AutoBrightnessService: ObservableObject, @unchecked Sendable {
         }
     }
 
-    /// Multiplier 0.5–1.5. Applied to builtin brightness when syncing to external displays.
+    /// Multiplier 0.5-1.5. Applied to builtin brightness when syncing to external displays.
     @Published var sensitivity: Double = 1.0 {
         didSet { savePrefs() }
     }
 
-    /// Last builtin brightness reading (0.0–1.0). 0 = unavailable / no builtin display.
+    /// Last builtin brightness reading (0.0-1.0). 0 = unavailable / no builtin display.
     @Published private(set) var builtinBrightness: Double = 0
     private var lastAppliedBrightness: Double = -1
 
@@ -53,7 +53,7 @@ final class AutoBrightnessService: ObservableObject, @unchecked Sendable {
     // MARK: - Builtin Brightness
 
     /// Reads the current brightness of the builtin display.
-    /// Returns a value in 0.0–1.0, or nil if no builtin display is found.
+    /// Returns a value in 0.0-1.0, or nil if no builtin display is found.
     /// Safe to call from a background thread.
     nonisolated func readBuiltinBrightness() -> Double? {
         var displayCount: UInt32 = 0

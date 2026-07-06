@@ -65,7 +65,7 @@ final class PresetService: ObservableObject, @unchecked Sendable {
         print("[PresetService] applyPreset '\(preset.name)': \(displays.count) display(s) online, preset has \(preset.displays.count) entr(ies)")
 
         if displays.isEmpty {
-            print("[PresetService] WARNING: displays list is empty – DisplayManagerAccessor may not be set up")
+            print("[PresetService] WARNING: displays list is empty - DisplayManagerAccessor may not be set up")
         }
 
         for (i, display) in displays.enumerated() {
@@ -75,14 +75,14 @@ final class PresetService: ObservableObject, @unchecked Sendable {
         var anyActionTaken = false
 
         for entry in preset.displays {
-            print("[PresetService] entry uuid=\(entry.displayUUID) target=\(entry.width)×\(entry.height) hiDPI=\(entry.isHiDPI)")
+            print("[PresetService] entry uuid=\(entry.displayUUID) target=\(entry.width)x\(entry.height) hiDPI=\(entry.isHiDPI)")
 
             guard let display = displays.first(where: { $0.displayUUID == entry.displayUUID }) else {
-                print("[PresetService]   -> no display matched UUID '\(entry.displayUUID)' – skipping")
+                print("[PresetService]   -> no display matched UUID '\(entry.displayUUID)' - skipping")
                 continue
             }
             guard display.isOnline else {
-                print("[PresetService]   -> display '\(display.name)' is offline – skipping")
+                print("[PresetService]   -> display '\(display.name)' is offline - skipping")
                 continue
             }
             // Never change built-in display resolution via presets
@@ -109,16 +109,16 @@ final class PresetService: ObservableObject, @unchecked Sendable {
                     && currentMode?.height == mode.height
                     && currentMode?.isHiDPI == mode.isHiDPI
                 if alreadyActive {
-                    print("[PresetService]   -> resolution \(mode.width)×\(mode.height) hiDPI=\(mode.isHiDPI) already active, skipping mode switch")
+                    print("[PresetService]   -> resolution \(mode.width)x\(mode.height) hiDPI=\(mode.isHiDPI) already active, skipping mode switch")
                 } else {
-                    print("[PresetService]   -> setting mode \(mode.width)×\(mode.height) hiDPI=\(mode.isHiDPI)")
+                    print("[PresetService]   -> setting mode \(mode.width)x\(mode.height) hiDPI=\(mode.isHiDPI)")
                     let ok = await ResolutionService.shared.setDisplayMode(mode, for: displayID)
                     print("[PresetService]   -> setDisplayMode result: \(ok)")
                     anyActionTaken = true
                 }
             } else {
-                print("[PresetService]   -> WARNING: no matching mode found for \(entry.width)×\(entry.height) hiDPI=\(entry.isHiDPI)")
-                print("[PresetService]      available: \(display.availableModes.map { "\($0.width)×\($0.height)/\($0.isHiDPI)" }.joined(separator: ", "))")
+                print("[PresetService]   -> WARNING: no matching mode found for \(entry.width)x\(entry.height) hiDPI=\(entry.isHiDPI)")
+                print("[PresetService]      available: \(display.availableModes.map { "\($0.width)x\($0.height)/\($0.isHiDPI)" }.joined(separator: ", "))")
             }
 
             // Set brightness if specified (convert 0.0-1.0 to 0-100 range used by BrightnessService)
@@ -198,7 +198,7 @@ final class PresetService: ObservableObject, @unchecked Sendable {
         let externals = DisplayManagerAccessor.shared.displays.filter { $0.isOnline && !$0.isBuiltin }
         guard !externals.isEmpty else { return [] }
 
-        // --- 原生模式 ---
+        // --- Native Mode ---
         let nativeEntries: [DisplayPresetEntry] = externals.map { display in
             let nativeMode: DisplayMode? = display.availableModes
                 .filter { !$0.isHiDPI }
@@ -217,7 +217,7 @@ final class PresetService: ObservableObject, @unchecked Sendable {
         }
 
         var nativePreset = DisplayPreset(
-            name: "原生模式",
+            name: "Native Mode",
             icon: "rectangle.on.rectangle",
             displays: nativeEntries
         )
@@ -225,7 +225,7 @@ final class PresetService: ObservableObject, @unchecked Sendable {
 
         var result: [DisplayPreset] = [nativePreset]
 
-        // --- HiDPI 模式 ---
+        // --- HiDPI Mode ---
         // Find the best HiDPI mode for each external display (highest logical resolution)
         let hasExternalWithHiDPI = externals.contains { display in
             display.availableModes.contains { $0.isHiDPI }
@@ -262,7 +262,7 @@ final class PresetService: ObservableObject, @unchecked Sendable {
                 }
             }
             var hidpiPreset = DisplayPreset(
-                name: "HiDPI 模式",
+                name: "HiDPI Mode",
                 icon: "sparkles",
                 displays: hidpiEntries
             )

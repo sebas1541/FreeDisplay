@@ -89,7 +89,7 @@ class DisplayManager: ObservableObject {
         displays = updatedDisplays
         DisplayManagerAccessor.shared.displays = updatedDisplays
 
-        // Regenerate built-in presets (HiDPI 模式 / 原生模式) from updated display list.
+        // Regenerate built-in presets (HiDPI Mode / Native Mode) from updated display list.
         PresetService.shared.refreshBuiltins()
 
         // Only load details / refresh brightness for newly appeared displays
@@ -136,7 +136,7 @@ class DisplayManager: ObservableObject {
         // Only auto-enable for 2K+ displays (width >= 2560 or total pixels >= 2560*1440)
         guard nativeW >= 2560 || (nativeW * nativeH >= 2560 * 1440) else { return }
 
-        print("[DisplayManager] Auto-enabling HiDPI for \(display.name) (\(nativeW)×\(nativeH), vendor=\(vendor), product=\(product))")
+        print("[DisplayManager] Auto-enabling HiDPI for \(display.name) (\(nativeW)x\(nativeH), vendor=\(vendor), product=\(product))")
 
         let err = await HiDPIService.shared.enableHiDPI(
             for: display.displayID,

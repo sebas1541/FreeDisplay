@@ -259,7 +259,7 @@ final class DDCService: ObservableObject, @unchecked Sendable {
             return nil
         }
 
-        // Build the display→AVService map using IORegistry matching
+        // Build the display->AVService map using IORegistry matching
         let serviceMap = buildAVServiceMap(workingServices: workingPairs)
 
         // Release the retained io_service_t entries now that mapping is done
@@ -714,7 +714,7 @@ final class DDCService: ObservableObject, @unchecked Sendable {
                 self.cacheLock.unlock()
 
                 // For each code with no fresh cache entry, perform a real I2C read.
-                // Every code ends up in result: success → .some(value), failure → .none.
+                // Every code ends up in result: success -> .some(value), failure -> .none.
                 for code in codes {
                     if cachedCodes.contains(code) { continue }
                     if let r = self.readSynchronous(displayID: displayID, command: code) {

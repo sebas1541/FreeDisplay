@@ -9,7 +9,7 @@ struct DisplayMode: Identifiable, Equatable {
     let width: Int
     /// Logical height in points
     let height: Int
-    /// Physical pixel width (HiDPI: 2× logical)
+    /// Physical pixel width (HiDPI: 2x logical)
     let pixelWidth: Int
     /// Physical pixel height
     let pixelHeight: Int
@@ -25,12 +25,12 @@ struct DisplayMode: Identifiable, Equatable {
     // MARK: - Display strings
 
     var resolutionString: String {
-        "\(width)×\(height)"
+        "\(width)x\(height)"
     }
 
     var refreshRateString: String {
         guard refreshRate > 0 else { return "-- Hz" }
-        // Round fractional rates to nearest integer: 59.97 → "60Hz", 119.88 → "120Hz"
+        // Round fractional rates to nearest integer: 59.97 -> "60Hz", 119.88 -> "120Hz"
         return "\(Int(refreshRate.rounded()))Hz"
     }
 

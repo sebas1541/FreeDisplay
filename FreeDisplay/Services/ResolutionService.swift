@@ -106,13 +106,13 @@ final class ResolutionService: @unchecked Sendable {
                 return await cgsFallback(modeID: UInt32(bitPattern: mode.ioDisplayModeID), on: targetID)
             }
             #if DEBUG
-            print("[ResolutionService] No matching CGDisplayMode for \(mode.width)×\(mode.height) hiDPI=\(mode.isHiDPI) on displayID=\(targetID)")
+            print("[ResolutionService] No matching CGDisplayMode for \(mode.width)x\(mode.height) hiDPI=\(mode.isHiDPI) on displayID=\(targetID)")
             #endif
             return false
         }
 
         #if DEBUG
-        print("[ResolutionService] Applying modeID=\(cgMode.ioDisplayModeID) (\(cgMode.width)×\(cgMode.height) pixW=\(cgMode.pixelWidth)) on displayID=\(targetID)")
+        print("[ResolutionService] Applying modeID=\(cgMode.ioDisplayModeID) (\(cgMode.width)x\(cgMode.height) pixW=\(cgMode.pixelWidth)) on displayID=\(targetID)")
         #endif
 
         // Apply via standard public CG API (off main thread to avoid blocking the UI)
@@ -188,7 +188,7 @@ final class ResolutionService: @unchecked Sendable {
     // MARK: - Commit via public CG API (async, call off main thread)
 
     /// Applies a display mode change off the calling thread.
-    /// The entire Begin→Configure→Complete transaction runs inside `CGHelpers.runWithTimeout`
+    /// The entire Begin->Configure->Complete transaction runs inside `CGHelpers.runWithTimeout`
     /// so `CGCompleteDisplayConfiguration` cannot block indefinitely on WindowServer IPC.
     nonisolated static func applyModeSync(_ cgMode: CGDisplayMode, on displayID: CGDirectDisplayID) async -> Bool {
         await CGHelpers.runWithTimeout(seconds: 10, fallback: false) {

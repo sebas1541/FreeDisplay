@@ -215,14 +215,14 @@ final class GammaService: @unchecked Sendable {
 
     private func channelParams(for adj: GammaAdjustment) -> ChannelParams {
         // ── Gamma exponent ──────────────────────────────────────────────
-        // slider=0 → exp=1.0; +100 → 0.5 (brighter curve); -100 → 2.0 (darker)
+        // slider=0 -> exp=1.0; +100 -> 0.5 (brighter curve); -100 -> 2.0 (darker)
         let globalGammaExp = pow(2.0, -adj.gammaVal / 100.0)
         let rGammaExp = globalGammaExp * pow(2.0, -adj.rGamma / 100.0)
         let gGammaExp = globalGammaExp * pow(2.0, -adj.gGamma / 100.0)
         let bGammaExp = globalGammaExp * pow(2.0, -adj.bGamma / 100.0)
 
         // ── Gain (output ceiling / brightness scale) ────────────────────
-        // slider=0 → 1.0; +100 → 2.0; -100 → 0.0
+        // slider=0 -> 1.0; +100 -> 2.0; -100 -> 0.0
         let globalGain = max(0.0, 1.0 + adj.gain / 100.0)
         let rGain = max(0.0, globalGain * (1.0 + adj.rGain / 100.0))
         let gGain = max(0.0, globalGain * (1.0 + adj.gGain / 100.0))
@@ -231,13 +231,13 @@ final class GammaService: @unchecked Sendable {
         // ── Color temperature ───────────────────────────────────────────
         let (tempR, tempG, tempB) = colorTempFactors(adj.colorTemperature)
 
-        // Per-channel max after gain × color-temp
+        // Per-channel max after gain x color-temp
         let rHiBase = rGain * tempR
         let gHiBase = gGain * tempG
         let bHiBase = bGain * tempB
 
         // ── Contrast (symmetric push/pull of min and max) ───────────────
-        // ±100% → ±0.4 shift, widening/narrowing the output range
+        // ±100% -> ±0.4 shift, widening/narrowing the output range
         let contrastShift = adj.contrast / 250.0
 
         var rLo = 0.0 - contrastShift
@@ -267,15 +267,15 @@ final class GammaService: @unchecked Sendable {
 
     // MARK: - Color temperature (Tanner Helland algorithm)
 
-    /// Returns per-channel gain multipliers normalised so that 6500 K → (1, 1, 1).
+    /// Returns per-channel gain multipliers normalised so that 6500 K -> (1, 1, 1).
     private func colorTempFactors(_ sliderValue: Double) -> (r: Double, g: Double, b: Double) {
         guard sliderValue != 0.0 else { return (1.0, 1.0, 1.0) }
         // positive slider = warmer (lower K); negative = cooler (higher K)
         let kelvin: Double
         if sliderValue > 0 {
-            kelvin = 6500.0 - sliderValue / 100.0 * 4500.0  // 6500 K → 2000 K
+            kelvin = 6500.0 - sliderValue / 100.0 * 4500.0  // 6500 K -> 2000 K
         } else {
-            kelvin = 6500.0 - sliderValue / 100.0 * 5500.0  // 6500 K → 12000 K
+            kelvin = 6500.0 - sliderValue / 100.0 * 5500.0  // 6500 K -> 12000 K
         }
         let (r, g, b) = kelvinToRGB(kelvin)
         let (rN, gN, bN) = kelvinToRGB(6500.0)

@@ -41,7 +41,7 @@ final class BrightnessHUDService: @unchecked Sendable {
 
     /// Shows the native macOS brightness OSD on the specified display.
     /// - Parameters:
-    ///   - brightness: Brightness level 0–100
+    ///   - brightness: Brightness level 0-100
     ///   - screen: The NSScreen on which the OSD should appear
     func show(brightness: Double, on screen: NSScreen) {
         guard let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID else {

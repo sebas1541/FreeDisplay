@@ -35,7 +35,7 @@ final class BrightnessKeyService: @unchecked Sendable {
     private var selfRetained: Unmanaged<BrightnessKeyService>?
     /// Number of poll retries attempted.
     private var pollRetryCount = 0
-    /// Max poll retries before giving up (2s × 15 = 30s).
+    /// Max poll retries before giving up (2s x 15 = 30s).
     private static let maxPollRetries = 15
 
     // MARK: - NX Media Key Constants
@@ -51,7 +51,7 @@ final class BrightnessKeyService: @unchecked Sendable {
     /// NX_KEYTYPE_BRIGHTNESS_DOWN
     private nonisolated(unsafe) static let nxKeytypeBrightnessDown: Int = 3
 
-    /// Each key press moves brightness by 1/16 (≈ 6.25 %), matching macOS native behaviour.
+    /// Each key press moves brightness by 1/16 (about  6.25 %), matching macOS native behaviour.
     private nonisolated(unsafe) static let brightnessStep: Double = 100.0 / 16.0
 
     // MARK: - Start / Stop
@@ -128,7 +128,7 @@ final class BrightnessKeyService: @unchecked Sendable {
                 self.pollTimer = nil
                 return
             }
-            NSLog("[BrightnessKeyService] Poll %d/%d: retrying…", self.pollRetryCount, Self.maxPollRetries)
+            NSLog("[BrightnessKeyService] Poll %d/%d: retrying...", self.pollRetryCount, Self.maxPollRetries)
             timer.invalidate()
             self.pollTimer = nil
             self.start()
@@ -169,7 +169,7 @@ final class BrightnessKeyService: @unchecked Sendable {
 
         let data1 = nsEvent.data1
         let keyCode = (data1 >> 16) & 0xFF
-        let isKeyDown = (data1 & 0x0100) == 0   // bit 8 clear → key down
+        let isKeyDown = (data1 & 0x0100) == 0   // bit 8 clear -> key down
 
         // Only intercept brightness keys.
         guard keyCode == Self.nxKeytypeBrightnessUp || keyCode == Self.nxKeytypeBrightnessDown else {

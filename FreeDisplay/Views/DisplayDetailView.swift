@@ -32,13 +32,13 @@ struct DisplayDetailView: View {
 
             Divider().opacity(0.3).padding(.vertical, 2)
 
-            // HiDPI toggle — before mode list (natural workflow: enable HiDPI → pick resolution)
+            // HiDPI toggle — before mode list (natural workflow: enable HiDPI -> pick resolution)
             HiDPIRowView(display: display)
 
             // Display mode list toggle row
             ExpandableRow(
                 icon: "rectangle.on.rectangle",
-                label: "显示模式",
+                label: "Display Modes",
                 subtitle: {
                     var parts: [String] = []
                     if let mode = display.currentDisplayMode {
@@ -67,7 +67,7 @@ struct DisplayDetailView: View {
             ExpandableRow(
                 icon: "paintpalette.fill",
                 iconColor: .purple,
-                label: "颜色描述文件",
+                label: "Color Profile",
                 subtitle: colorSpaceName,
                 isExpanded: $showColorProfile
             )
@@ -84,7 +84,7 @@ struct DisplayDetailView: View {
             // Image adjustment section
             ExpandableRow(
                 icon: "slider.horizontal.3",
-                label: "图像调整",
+                label: "Image Adjustment",
                 isExpanded: $showImageAdjustment
             )
 

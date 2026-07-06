@@ -8,7 +8,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var onWake: (() -> Void)?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // 防止重复启动：如果已有实例在运行，直接退出
+        // Prevent duplicate launches: if another instance is running, quit immediately
         let runningApps = NSWorkspace.shared.runningApplications.filter {
             $0.bundleIdentifier == Bundle.main.bundleIdentifier
         }

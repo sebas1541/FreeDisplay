@@ -6,8 +6,8 @@ import IOKit
 private func CGDisplayIOServicePort(_ display: CGDirectDisplayID) -> io_service_t
 
 // CGVirtualDisplay and CGVirtualDisplaySettings are ObjC objects without Sendable
-// conformance, but we only use them sequentially (create on main → pass to background
-// for apply → use result on main), so @unchecked Sendable is safe here.
+// conformance, but we only use them sequentially (create on main -> pass to background
+// for apply -> use result on main), so @unchecked Sendable is safe here.
 extension CGVirtualDisplayDescriptor: @unchecked @retroactive Sendable {}
 extension CGVirtualDisplay: @unchecked @retroactive Sendable {}
 extension CGVirtualDisplaySettings: @unchecked @retroactive Sendable {}
@@ -156,7 +156,7 @@ final class VirtualDisplayService: ObservableObject, @unchecked Sendable {
             return false
         }
 
-        // ARC releases the CGVirtualDisplay → virtual display disappears
+        // ARC releases the CGVirtualDisplay -> virtual display disappears
         activeDisplayObjects.removeValue(forKey: configID)
         activeConfigIDs.remove(configID)
 
@@ -204,7 +204,7 @@ final class VirtualDisplayService: ObservableObject, @unchecked Sendable {
                     // virtual display with matching dimensions already exists.
                     guard !virtualDisplayAlreadyExists(width: config.width, height: config.height) else {
                         #if DEBUG
-                        print("[VirtualDisplayService] autoCreate skipped — virtual display \(config.width)×\(config.height) already online")
+                        print("[VirtualDisplayService] autoCreate skipped — virtual display \(config.width)x\(config.height) already online")
                         #endif
                         continue
                     }

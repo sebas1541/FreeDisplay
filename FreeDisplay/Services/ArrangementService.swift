@@ -10,7 +10,7 @@ class ArrangementService {
     private init() {}
 
     /// Moves the given display to the specified position in the global coordinate space.
-    /// The entire Begin→Origin→Complete transaction runs inside `CGHelpers.runWithTimeout`
+    /// The entire Begin->Origin->Complete transaction runs inside `CGHelpers.runWithTimeout`
     /// so `CGCompleteDisplayConfiguration` cannot block indefinitely on WindowServer IPC.
     /// - Returns: true if the configuration was applied successfully.
     @discardableResult
@@ -31,7 +31,7 @@ class ArrangementService {
 
     /// Makes the target display the main display by moving it to origin (0, 0).
     /// Moves the current main display to the position previously occupied by the target.
-    /// The entire Begin→Origin→Complete transaction runs inside `CGHelpers.runWithTimeout`
+    /// The entire Begin->Origin->Complete transaction runs inside `CGHelpers.runWithTimeout`
     /// so `CGCompleteDisplayConfiguration` cannot block indefinitely on WindowServer IPC.
     /// - Returns: true if the configuration was applied successfully.
     @discardableResult
@@ -52,7 +52,7 @@ class ArrangementService {
             guard CGBeginDisplayConfiguration(&config) == .success,
                   let cfg = config else { return false }
 
-            // Move target to origin → it becomes the new main display
+            // Move target to origin -> it becomes the new main display
             CGConfigureDisplayOrigin(cfg, targetID, 0, 0)
 
             // Move old main to where the target was.

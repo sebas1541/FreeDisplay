@@ -86,7 +86,7 @@ final class HiDPIService: @unchecked Sendable {
         ]
 
         guard let data = try? PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0) else {
-            return "生成 Plist 数据失败"
+            return "Failed to generate plist data"
         }
 
         // Write to a temp file first, then use privileged helper to move it
@@ -94,7 +94,7 @@ final class HiDPIService: @unchecked Sendable {
         do {
             try data.write(to: URL(fileURLWithPath: tmpPath), options: .atomic)
         } catch {
-            return "写入临时文件失败：\(error.localizedDescription)"
+            return "Failed to write temporary file: \(error.localizedDescription)"
         }
 
         // Use AppleScript to get admin privileges for writing to /Library/Displays/
@@ -131,15 +131,15 @@ final class HiDPIService: @unchecked Sendable {
             """
         var error: NSDictionary?
         guard let appleScript = NSAppleScript(source: script) else {
-            return "创建 AppleScript 失败"
+            return "Failed to create AppleScript"
         }
         appleScript.executeAndReturnError(&error)
         if let error = error {
-            let msg = error[NSAppleScript.errorMessage] as? String ?? "未知错误"
+            let msg = error[NSAppleScript.errorMessage] as? String ?? "Unknown error"
             if msg.contains("canceled") || msg.contains("Cancel") {
-                return "用户取消了授权"
+                return "Authorization canceled"
             }
-            return "管理员授权失败：\(msg)"
+            return "Administrator authorization failed: \(msg)"
         }
         return nil
     }
@@ -196,11 +196,11 @@ final class HiDPIService: @unchecked Sendable {
 
     private func generateScaledModes(nativeWidth: Int, nativeHeight: Int) -> [Data] {
         // Generate HiDPI modes: each entry is 8 bytes big-endian (backingW, backingH)
-        // For a 2560×1440 display, we want:
-        //   1920×1080 HiDPI (backing 3840×2160)
-        //   1600×900  HiDPI (backing 3200×1800)
-        //   1280×720  HiDPI (backing 2560×1440)
-        //   native as HiDPI (backing 5120×2880)
+        // For a 2560x1440 display, we want:
+        //   1920x1080 HiDPI (backing 3840x2160)
+        //   1600x900  HiDPI (backing 3200x1800)
+        //   1280x720  HiDPI (backing 2560x1440)
+        //   native as HiDPI (backing 5120x2880)
         var resolutions: [(Int, Int)] = []
 
         // Native resolution as HiDPI (2x backing)
