@@ -221,6 +221,8 @@ final class BrightnessService: @unchecked Sendable {
                 return
             }
 
+            display.brightness = clamped
+
             // Denormalize percentage to display's native DDC range.
             // If max is unknown, default to 100 (safe for most monitors).
             let knownMax: UInt16 = ddcAvailableLock.withLock {
@@ -228,8 +230,8 @@ final class BrightnessService: @unchecked Sendable {
             }
             let ddcValue = UInt16((clamped / 100.0) * Double(knownMax))
 
-            // Attempt DDC write; if it fails, fall back to gamma table dimming
-            DDCService.shared.writeAsync(
+            // Queue only the latest DDC target so sliders and repeated keys stay responsive.
+            DDCService.shared.writeLatestAsync(
                 displayID: displayID,
                 command: DDCService.brightnessVCP,
                 value: ddcValue
@@ -299,37 +301,31 @@ final class BrightnessService: @unchecked Sendable {
                     BrightnessService.shared.setSoftwareBrightness(value, for: displayID)
                 }
             } else {
-                // DDC path: 5 steps over 200ms.
-                // DDC I2C is slow (~40-50ms per command), so 5 steps at 40ms intervals
-                // keeps the bus from overloading while giving smooth visible steps.
+                // DDC path: update the UI immediately and queue one latest-value write.
+                // Sending intermediate I2C writes makes external monitors feel delayed.
+                anim.cancel()
+                display.brightness = clamped
                 let knownMax: UInt16 = ddcAvailableLock.withLock {
                     ddcMaxBrightness[displayID] ?? 100
                 }
-                anim.animate(from: fromBrightness, to: clamped, steps: 5, duration: 0.20) { [weak self, weak display] value, isLast in
+                let ddcValue = UInt16((clamped / 100.0) * Double(knownMax))
+                DDCService.shared.writeLatestAsync(
+                    displayID: displayID,
+                    command: DDCService.brightnessVCP,
+                    value: ddcValue
+                ) { [weak self] success in
                     guard let self else { return }
-                    display?.brightness = value
-                    let ddcValue = UInt16((value / 100.0) * Double(knownMax))
-                    // Only send DDC on intermediate steps and the final step.
-                    // If DDC fails on the final step, fall through to software.
-                    DDCService.shared.writeAsync(
-                        displayID: displayID,
-                        command: DDCService.brightnessVCP,
-                        value: ddcValue
-                    ) { [weak self] success in
-                        guard let self else { return }
-                        Task { @MainActor in
-                            if success {
-                                self.ddcAvailableLock.withLock { self.ddcAvailable[displayID] = true }
-                            } else if isLast {
-                                // DDC failed — mark unavailable and apply software fallback
-                                self.ddcAvailableLock.withLock { self.ddcAvailable[displayID] = false }
-                                if SettingsService.shared.allowSoftwareBrightness {
-                                    self.setSoftwareBrightness(clamped, for: displayID)
-                                }
-                                #if DEBUG
-                                print("[BrightnessService] smooth DDC failed for \(displayID), software fallback enabled: \(SettingsService.shared.allowSoftwareBrightness)")
-                                #endif
+                    Task { @MainActor in
+                        if success {
+                            self.ddcAvailableLock.withLock { self.ddcAvailable[displayID] = true }
+                        } else {
+                            self.ddcAvailableLock.withLock { self.ddcAvailable[displayID] = false }
+                            if SettingsService.shared.allowSoftwareBrightness {
+                                self.setSoftwareBrightness(clamped, for: displayID)
                             }
+                            #if DEBUG
+                            print("[BrightnessService] fast DDC failed for \(displayID), software fallback enabled: \(SettingsService.shared.allowSoftwareBrightness)")
+                            #endif
                         }
                     }
                 }

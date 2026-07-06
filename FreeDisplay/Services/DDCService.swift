@@ -23,6 +23,16 @@ final class DDCService: ObservableObject, @unchecked Sendable {
 
     private let ddcQueue = DispatchQueue(label: "com.freedisplay.ddc", qos: .userInitiated)
 
+    private struct WriteKey: Hashable {
+        let displayID: CGDirectDisplayID
+        let command: UInt8
+    }
+
+    private var latestWriteValues: [WriteKey: UInt16] = [:]
+    private var latestWriteCallbacks: [WriteKey: [(Bool) -> Void]] = [:]
+    private var latestWriteActive: Set<WriteKey> = []
+    private var latestWriteLastValues: [WriteKey: UInt16] = [:]
+
     // MARK: - VCP Read Cache (5-second TTL)
 
     private struct VCPCacheEntry {
@@ -638,6 +648,58 @@ final class DDCService: ObservableObject, @unchecked Sendable {
                 if attempt < 2 { Thread.sleep(forTimeInterval: 0.05) }
             }
             completion?(false)
+        }
+    }
+
+    /// Asynchronously writes only the most recent requested value for a display/VCP pair.
+    /// This keeps sliders and repeated brightness keys responsive by dropping stale
+    /// intermediate DDC writes while one I2C transaction is already in flight.
+    func writeLatestAsync(
+        displayID: CGDirectDisplayID,
+        command: UInt8,
+        value: UInt16,
+        completion: ((Bool) -> Void)? = nil
+    ) {
+        let key = WriteKey(displayID: displayID, command: command)
+        ddcQueue.async {
+            self.latestWriteValues[key] = value
+            if let completion {
+                self.latestWriteCallbacks[key, default: []].append(completion)
+            }
+            guard !self.latestWriteActive.contains(key) else { return }
+            self.latestWriteActive.insert(key)
+            self.drainLatestWrite(for: key)
+        }
+    }
+
+    private func drainLatestWrite(for key: WriteKey) {
+        guard let value = latestWriteValues.removeValue(forKey: key) else {
+            latestWriteActive.remove(key)
+            return
+        }
+
+        let callbacks = latestWriteCallbacks.removeValue(forKey: key) ?? []
+        let success: Bool
+        if latestWriteLastValues[key] == value {
+            success = true
+        } else {
+            success = writeSynchronous(displayID: key.displayID, command: key.command, value: value)
+            if success {
+                latestWriteLastValues[key] = value
+                cacheLock.lock()
+                vcpCache[key.displayID]?[key.command] = nil
+                cacheLock.unlock()
+            }
+        }
+
+        callbacks.forEach { $0(success) }
+
+        if latestWriteValues[key] != nil {
+            ddcQueue.async {
+                self.drainLatestWrite(for: key)
+            }
+        } else {
+            latestWriteActive.remove(key)
         }
     }
 

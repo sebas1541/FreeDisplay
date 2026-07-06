@@ -334,21 +334,17 @@ struct QuickDisplayPanelView: View {
                         .padding(.horizontal, 12)
                         .padding(.vertical, 10)
                     } else {
-                        ForEach(Array(visibleDisplays.enumerated()), id: \.element.id) { index, display in
+                        ForEach(visibleDisplays) { display in
                             QuickDisplayControlView(display: display)
-                            if index < visibleDisplays.count - 1 {
-                                Divider()
-                                    .opacity(0.3)
-                                    .padding(.vertical, 4)
-                            }
                         }
                     }
                 }
-                .padding(.vertical, 8)
+                .padding(10)
             }
             .frame(minHeight: 180, maxHeight: 620)
         }
-        .frame(width: 360)
+        .frame(width: 330)
+        .background(Color(NSColor.windowBackgroundColor))
         .task {
             displayManager.refreshDisplays()
         }
@@ -357,7 +353,6 @@ struct QuickDisplayPanelView: View {
 
 struct QuickDisplayControlView: View {
     @ObservedObject var display: DisplayInfo
-    @State private var showDisplayModes = false
 
     private var subtitle: String {
         var parts: [String] = []
@@ -376,13 +371,16 @@ struct QuickDisplayControlView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                MenuItemIcon(systemName: display.isBuiltin ? "macbook" : "display", color: .blue)
+                Image(systemName: display.isBuiltin ? "macbook" : "display")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(.secondary)
+                    .frame(width: 20, height: 20)
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 5) {
                         Text(display.name)
-                            .font(.headline)
+                            .font(.system(size: 12, weight: .semibold))
                             .lineLimit(1)
                             .truncationMode(.tail)
                         if display.isMain {
@@ -397,39 +395,174 @@ struct QuickDisplayControlView: View {
                         }
                     }
                     Text(subtitle)
-                        .font(.caption)
+                        .font(.system(size: 10))
                         .foregroundColor(.secondary)
                         .lineLimit(1)
                         .truncationMode(.tail)
                 }
                 Spacer()
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
 
-            BrightnessSliderView(display: display)
+            QuickBrightnessSliderView(display: display)
+            QuickDisplayModePickerView(display: display)
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.primary.opacity(0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.primary.opacity(0.12), lineWidth: 1)
+        )
+        .padding(.bottom, 8)
+    }
+}
 
-            Divider()
-                .opacity(0.3)
-                .padding(.vertical, 2)
+struct QuickBrightnessSliderView: View {
+    @ObservedObject var display: DisplayInfo
+    @State private var localBrightness: Double = 50
+    @State private var isDragging = false
+    @State private var lastDDCWrite: Date = .distantPast
 
-            HiDPIRowView(display: display)
+    var body: some View {
+        HStack(spacing: 9) {
+            Image(systemName: "sun.min.fill")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(.secondary)
+                .frame(width: 16)
+                .accessibilityHidden(true)
 
-            ExpandableRow(
-                icon: "rectangle.on.rectangle",
-                iconColor: .blue,
-                label: "DPI / Display Modes",
-                subtitle: display.currentDisplayMode?.isHiDPI == true ? "HiDPI" : nil,
-                isExpanded: $showDisplayModes
-            )
+            Slider(value: $localBrightness, in: 5...100, step: 1) { editing in
+                isDragging = editing
+                if !editing {
+                    Task { @MainActor in
+                        BrightnessService.shared.setBrightnessSmooth(localBrightness, for: display)
+                    }
+                    lastDDCWrite = Date()
+                }
+            }
+            .controlSize(.small)
+            .tint(.white)
+            .accessibilityLabel("Brightness")
+            .accessibilityValue("\(Int(localBrightness))%")
+            .onChange(of: localBrightness) { _, newValue in
+                guard isDragging else { return }
+                let now = Date()
+                let isDDC = BrightnessService.shared.isDDCAvailable(for: display.displayID) == true
+                if isDDC && now.timeIntervalSince(lastDDCWrite) < 0.02 {
+                    display.brightness = newValue
+                    return
+                }
+                lastDDCWrite = now
+                display.brightness = newValue
+                Task { @MainActor in
+                    await BrightnessService.shared.setBrightness(newValue, for: display)
+                }
+            }
 
-            if showDisplayModes {
-                DisplayModeListView(display: display)
-                    .padding(.leading, 8)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+            Text("\(Int(localBrightness))%")
+                .font(.system(size: 11, weight: .medium, design: .rounded))
+                .foregroundColor(.secondary)
+                .monospacedDigit()
+                .frame(width: 34, alignment: .trailing)
+        }
+        .onAppear { localBrightness = display.brightness }
+        .onChange(of: display.brightness) { _, newValue in
+            if !isDragging && abs(newValue - localBrightness) >= 1 {
+                localBrightness = newValue
             }
         }
-        .padding(.vertical, 2)
+    }
+}
+
+struct QuickDisplayModePickerView: View {
+    @ObservedObject var display: DisplayInfo
+    @State private var selectedModeID: Int32 = 0
+    @State private var isSwitching = false
+
+    private var modes: [DisplayMode] {
+        let filtered = display.availableModes.filter { $0.width >= 1024 && $0.height >= 576 }
+        var seen = Set<String>()
+        return filtered.filter { mode in
+            let key = "\(mode.width)x\(mode.height)-\(Int(mode.refreshRate.rounded()))-\(mode.isHiDPI)"
+            return seen.insert(key).inserted
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 9) {
+            Image(systemName: "rectangle.on.rectangle")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(.secondary)
+                .frame(width: 16)
+                .accessibilityHidden(true)
+
+            Text("DPI")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(.secondary)
+
+            Spacer(minLength: 8)
+
+            if isSwitching {
+                ProgressView()
+                    .scaleEffect(0.55)
+                    .frame(width: 16, height: 16)
+            }
+
+            Picker("", selection: $selectedModeID) {
+                ForEach(modes) { mode in
+                    Text(modeTitle(mode))
+                        .tag(mode.id)
+                }
+            }
+            .labelsHidden()
+            .controlSize(.small)
+            .frame(maxWidth: 188)
+            .disabled(isSwitching || modes.isEmpty)
+            .onChange(of: selectedModeID) { _, newID in
+                guard newID != display.currentDisplayMode?.id,
+                      let mode = modes.first(where: { $0.id == newID }) else { return }
+                switchTo(mode)
+            }
+        }
+        .onAppear {
+            selectedModeID = display.currentDisplayMode?.id ?? modes.first?.id ?? 0
+        }
+        .onChange(of: display.currentDisplayMode?.id) { _, newID in
+            if let newID, selectedModeID != newID {
+                selectedModeID = newID
+            }
+        }
+    }
+
+    private func modeTitle(_ mode: DisplayMode) -> String {
+        var text = mode.resolutionString
+        if mode.isHiDPI { text += " HiDPI" }
+        if mode.refreshRate > 0 { text += " \(mode.refreshRateString)" }
+        return text
+    }
+
+    private func switchTo(_ mode: DisplayMode) {
+        isSwitching = true
+        let displayID = display.displayID
+        Task { @MainActor in
+            var success = await ResolutionService.shared.setDisplayMode(mode, for: displayID)
+            if !success {
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                success = await ResolutionService.shared.setDisplayMode(mode, for: displayID)
+            }
+            if success {
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                let refreshedMode = await Task.detached(priority: .userInitiated) {
+                    DisplayMode.currentMode(for: displayID)
+                }.value
+                display.currentDisplayMode = refreshedMode ?? mode
+            } else {
+                selectedModeID = display.currentDisplayMode?.id ?? selectedModeID
+            }
+            isSwitching = false
+        }
     }
 }
 

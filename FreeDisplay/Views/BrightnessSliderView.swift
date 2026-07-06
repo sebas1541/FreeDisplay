@@ -7,7 +7,7 @@ struct BrightnessSliderView: View {
     @State private var valueHighlighted: Bool = false
     @State private var highlightTask: Task<Void, Never>?
     @State private var ddcStatus: Bool? = nil  // nil=unknown, true=DDC, false=Software
-    /// Throttle DDC writes during drag to ~100ms intervals.
+    /// Throttle DDC writes during drag while DDCService collapses stale values.
     @State private var lastDDCWrite: Date = .distantPast
 
     var body: some View {
@@ -54,7 +54,7 @@ struct BrightnessSliderView: View {
                 Slider(value: $localBrightness, in: 5...100, step: 1) { editing in
                     isDragging = editing
                     if !editing {
-                        // Drag ended — apply final value with smooth transition and show highlight.
+                        // Drag ended — flush final value and show highlight.
                         withAnimation(.easeOut(duration: 0.3)) { valueHighlighted = true }
                         highlightTask?.cancel()
                         highlightTask = Task { @MainActor in
@@ -62,7 +62,6 @@ struct BrightnessSliderView: View {
                             withAnimation(.easeOut(duration: 0.3)) { valueHighlighted = false }
                         }
                         Task { @MainActor in
-                            // Use smooth transition from current hardware brightness to slider value.
                             BrightnessService.shared.setBrightnessSmooth(localBrightness, for: display)
                             updateDDCStatus()
                         }
@@ -75,10 +74,10 @@ struct BrightnessSliderView: View {
                 .onChange(of: localBrightness) { _, newValue in
                     guard isDragging else { return }
                     // Apply immediately — the service chooses software or DDC internally.
-                    // For DDC displays, throttle to ~100ms to avoid flooding the I2C bus.
+                    // For DDC displays, a light throttle plus latest-value coalescing keeps it responsive.
                     let isDDC = ddcStatus == true
                     let now = Date()
-                    if isDDC && now.timeIntervalSince(lastDDCWrite) < 0.1 {
+                    if isDDC && now.timeIntervalSince(lastDDCWrite) < 0.02 {
                         // Too soon for another DDC write; the drag-end handler will flush the final value.
                         display.brightness = newValue
                         return
@@ -130,7 +129,7 @@ struct CombinedBrightnessView: View {
     let displays: [DisplayInfo]
     @State private var combinedBrightness: Double = 50
     @State private var isDragging: Bool = false
-    /// Throttle DDC writes during drag to ~100ms intervals.
+    /// Throttle DDC writes during drag while DDCService collapses stale values.
     @State private var lastDDCWrite: Date = .distantPast
 
     private var averageBrightness: Double {
@@ -170,7 +169,7 @@ struct CombinedBrightnessView: View {
                 Slider(value: $combinedBrightness, in: 5...100, step: 1) { editing in
                     isDragging = editing
                     if !editing {
-                        // Drag ended — flush final value to all displays with smooth transition.
+                        // Drag ended — flush final value to all displays.
                         Task { @MainActor in
                             for display in displays {
                                 BrightnessService.shared.setBrightnessSmooth(combinedBrightness, for: display)
@@ -184,7 +183,7 @@ struct CombinedBrightnessView: View {
                 .onChange(of: combinedBrightness) { _, newValue in
                     guard isDragging else { return }
                     let now = Date()
-                    if anyDDC && now.timeIntervalSince(lastDDCWrite) < 0.1 {
+                    if anyDDC && now.timeIntervalSince(lastDDCWrite) < 0.02 {
                         // Throttle DDC — update model only; drag-end flushes final value.
                         for display in displays { display.brightness = newValue }
                         return
