@@ -80,33 +80,54 @@ struct MenuBarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-        ScrollView(.vertical, showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 0) {
-                // 显示器列表
-                ForEach(visibleDisplays) { display in
-                    VStack(spacing: 0) {
-                        DisplayRowView(
-                            display: display,
-                            isExpanded: expandedDisplayIDs.contains(display.displayID),
-                            onToggleExpand: {
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 0) {
+                    // 显示器列表
+                    if visibleDisplays.isEmpty {
+                        HStack(spacing: 8) {
+                            MenuItemIcon(systemName: "display.trianglebadge.exclamationmark", color: .orange)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("未检测到显示器")
+                                    .font(.body)
+                                Text("点击菜单时会重新扫描")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            Button("刷新") {
+                                displayManager.refreshDisplays()
+                            }
+                            .buttonStyle(.borderless)
+                            .font(.caption)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                    } else {
+                        ForEach(visibleDisplays) { display in
+                            VStack(spacing: 0) {
+                                DisplayRowView(
+                                    display: display,
+                                    isExpanded: expandedDisplayIDs.contains(display.displayID),
+                                    onToggleExpand: {
+                                        if expandedDisplayIDs.contains(display.displayID) {
+                                            expandedDisplayIDs.remove(display.displayID)
+                                        } else {
+                                            expandedDisplayIDs.insert(display.displayID)
+                                        }
+                                    }
+                                )
+
                                 if expandedDisplayIDs.contains(display.displayID) {
-                                    expandedDisplayIDs.remove(display.displayID)
-                                } else {
-                                    expandedDisplayIDs.insert(display.displayID)
+                                    DisplayDetailView(display: display)
                                 }
                             }
-                        )
-
-                        if expandedDisplayIDs.contains(display.displayID) {
-                            DisplayDetailView(display: display)
                         }
                     }
-                }
 
-                // 预设列表 (Phase 19)
-                Divider()
-                    .opacity(0.3)
-                    .padding(.vertical, 2)
+                    // 预设列表 (Phase 19)
+                    Divider()
+                        .opacity(0.3)
+                        .padding(.vertical, 2)
 
                 PresetListView()
 
@@ -225,8 +246,10 @@ struct MenuBarView: View {
                     .padding(.horizontal, 8)
                 }
 
+                }
             }
-        }
+            .frame(minHeight: 360, maxHeight: 620)
+            .layoutPriority(1)
 
         Divider().opacity(0.3)
 
@@ -262,13 +285,13 @@ struct MenuBarView: View {
 
         } // end VStack
         .frame(width: 340)
-        .frame(maxHeight: 700)
         .padding(.vertical, 8)
         .onReceive(displayManager.$displays) { newDisplays in
             let validIDs = Set(newDisplays.map { $0.displayID })
             expandedDisplayIDs = expandedDisplayIDs.intersection(validIDs)
         }
         .task {
+            displayManager.refreshDisplays()
             if settings.checkUpdatesOnLaunch {
                 await updateService.checkForUpdates()
             }
