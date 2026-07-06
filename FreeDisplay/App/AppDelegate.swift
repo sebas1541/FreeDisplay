@@ -48,7 +48,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func configureStatusItem() {
         quickPopover.behavior = .transient
-        quickPopover.contentSize = NSSize(width: 360, height: 560)
+        quickPopover.contentSize = NSSize(width: 250, height: 280)
         quickPopover.contentViewController = NSHostingController(
             rootView: QuickDisplayPanelView()
                 .environmentObject(displayManager)
@@ -84,12 +84,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func showQuickPopover(relativeTo button: NSStatusBarButton) {
         settingsPopover.performClose(nil)
         displayManager.refreshDisplays()
+        updateQuickPopoverSize()
 
         if quickPopover.isShown {
             quickPopover.performClose(nil)
         } else {
             quickPopover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         }
+    }
+
+    private func updateQuickPopoverSize() {
+        let visibleCount = displayManager.displays.filter {
+            !VirtualDisplayService.shared.isVirtualDisplay($0.displayID)
+        }.count
+        let height = visibleCount == 0 ? 110 : min(500, 22 + visibleCount * 116)
+        quickPopover.contentSize = NSSize(width: 250, height: height)
     }
 
     private func showSettingsPopover() {

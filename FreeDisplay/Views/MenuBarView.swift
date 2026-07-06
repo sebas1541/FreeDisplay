@@ -339,11 +339,11 @@ struct QuickDisplayPanelView: View {
                         }
                     }
                 }
-                .padding(10)
+                .padding(9)
             }
-            .frame(minHeight: 180, maxHeight: 620)
+            .frame(maxHeight: 500)
         }
-        .frame(width: 330)
+        .frame(width: 250)
         .background(Color(NSColor.windowBackgroundColor))
         .task {
             displayManager.refreshDisplays()
@@ -354,68 +354,29 @@ struct QuickDisplayPanelView: View {
 struct QuickDisplayControlView: View {
     @ObservedObject var display: DisplayInfo
 
-    private var subtitle: String {
-        var parts: [String] = []
-        if let mode = display.currentDisplayMode {
-            parts.append(mode.resolutionString)
-            if mode.isHiDPI {
-                parts.append("HiDPI")
-            }
-        } else {
-            parts.append("\(display.pixelWidth)x\(display.pixelHeight)")
-        }
-        if display.isMain {
-            parts.append("Main")
-        }
-        return parts.joined(separator: " · ")
-    }
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Image(systemName: display.isBuiltin ? "macbook" : "display")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(.secondary)
-                    .frame(width: 20, height: 20)
-                VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 5) {
-                        Text(display.name)
-                            .font(.system(size: 12, weight: .semibold))
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                        if display.isMain {
-                            Text("Main")
-                                .font(.caption2)
-                                .fontWeight(.semibold)
-                                .foregroundColor(.accentColor)
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 1)
-                                .background(Color.accentColor.opacity(0.14))
-                                .cornerRadius(4)
-                        }
-                    }
-                    Text(subtitle)
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
-                Spacer()
-            }
+        VStack(alignment: .leading, spacing: 9) {
+            Text(display.name)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .padding(.leading, 14)
 
             QuickBrightnessSliderView(display: display)
-            QuickDisplayModePickerView(display: display)
+            QuickHiDPIResolutionSliderView(display: display)
         }
-        .padding(12)
+        .padding(.horizontal, 13)
+        .padding(.vertical, 12)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(Color.primary.opacity(0.08))
+                .fill(Color.primary.opacity(0.055))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.primary.opacity(0.12), lineWidth: 1)
+                .stroke(Color.primary.opacity(0.18), lineWidth: 1)
         )
-        .padding(.bottom, 8)
+        .padding(.bottom, 9)
     }
 }
 
@@ -426,14 +387,14 @@ struct QuickBrightnessSliderView: View {
     @State private var lastDDCWrite: Date = .distantPast
 
     var body: some View {
-        HStack(spacing: 9) {
-            Image(systemName: "sun.min.fill")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(.secondary)
-                .frame(width: 16)
-                .accessibilityHidden(true)
-
-            Slider(value: $localBrightness, in: 5...100, step: 1) { editing in
+        QuickPillSlider(
+            value: $localBrightness,
+            range: 5...100,
+            step: 1,
+            icon: "sun.max.fill",
+            valueText: "\(Int(localBrightness))%",
+            showsTicks: false,
+            onEditingChanged: { editing in
                 isDragging = editing
                 if !editing {
                     Task { @MainActor in
@@ -442,30 +403,22 @@ struct QuickBrightnessSliderView: View {
                     lastDDCWrite = Date()
                 }
             }
-            .controlSize(.small)
-            .tint(.white)
-            .accessibilityLabel("Brightness")
-            .accessibilityValue("\(Int(localBrightness))%")
-            .onChange(of: localBrightness) { _, newValue in
-                guard isDragging else { return }
-                let now = Date()
-                let isDDC = BrightnessService.shared.isDDCAvailable(for: display.displayID) == true
-                if isDDC && now.timeIntervalSince(lastDDCWrite) < 0.02 {
-                    display.brightness = newValue
-                    return
-                }
-                lastDDCWrite = now
+        )
+        .accessibilityLabel("Brightness")
+        .accessibilityValue("\(Int(localBrightness))%")
+        .onChange(of: localBrightness) { _, newValue in
+            guard isDragging else { return }
+            let now = Date()
+            let isDDC = BrightnessService.shared.isDDCAvailable(for: display.displayID) == true
+            if isDDC && now.timeIntervalSince(lastDDCWrite) < 0.02 {
                 display.brightness = newValue
-                Task { @MainActor in
-                    await BrightnessService.shared.setBrightness(newValue, for: display)
-                }
+                return
             }
-
-            Text("\(Int(localBrightness))%")
-                .font(.system(size: 11, weight: .medium, design: .rounded))
-                .foregroundColor(.secondary)
-                .monospacedDigit()
-                .frame(width: 34, alignment: .trailing)
+            lastDDCWrite = now
+            display.brightness = newValue
+            Task { @MainActor in
+                await BrightnessService.shared.setBrightness(newValue, for: display)
+            }
         }
         .onAppear { localBrightness = display.brightness }
         .onChange(of: display.brightness) { _, newValue in
@@ -476,74 +429,95 @@ struct QuickBrightnessSliderView: View {
     }
 }
 
-struct QuickDisplayModePickerView: View {
+struct QuickHiDPIResolutionSliderView: View {
     @ObservedObject var display: DisplayInfo
-    @State private var selectedModeID: Int32 = 0
+    @State private var selectedIndex: Double = 0
+    @State private var appliedModeID: Int32 = 0
     @State private var isSwitching = false
 
     private var modes: [DisplayMode] {
-        let filtered = display.availableModes.filter { $0.width >= 1024 && $0.height >= 576 }
-        var seen = Set<String>()
-        return filtered.filter { mode in
-            let key = "\(mode.width)x\(mode.height)-\(Int(mode.refreshRate.rounded()))-\(mode.isHiDPI)"
-            return seen.insert(key).inserted
+        let filtered = display.availableModes.filter {
+            $0.isHiDPI && $0.width >= 1024 && $0.height >= 576
         }
+        var seen = Set<String>()
+        return filtered
+            .filter { mode in
+                let key = "\(mode.width)x\(mode.height)"
+                return seen.insert(key).inserted
+            }
+            .sorted {
+                if $0.width != $1.width { return $0.width < $1.width }
+                if $0.height != $1.height { return $0.height < $1.height }
+                return $0.refreshRate < $1.refreshRate
+            }
+    }
+
+    private var selectedMode: DisplayMode? {
+        guard !modes.isEmpty else { return nil }
+        let index = min(max(Int(selectedIndex.rounded()), 0), modes.count - 1)
+        return modes[index]
     }
 
     var body: some View {
-        HStack(spacing: 9) {
-            Image(systemName: "rectangle.on.rectangle")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(.secondary)
-                .frame(width: 16)
-                .accessibilityHidden(true)
-
-            Text("DPI")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(.secondary)
-
-            Spacer(minLength: 8)
-
-            if isSwitching {
-                ProgressView()
-                    .scaleEffect(0.55)
-                    .frame(width: 16, height: 16)
-            }
-
-            Picker("", selection: $selectedModeID) {
-                ForEach(modes) { mode in
-                    Text(modeTitle(mode))
-                        .tag(mode.id)
+        VStack(alignment: .leading, spacing: 3) {
+            QuickPillSlider(
+                value: $selectedIndex,
+                range: 0...Double(max(modes.count - 1, 0)),
+                step: 1,
+                icon: "rectangle.on.rectangle",
+                valueText: selectedMode.map(modeTitle) ?? "No HiDPI",
+                showsTicks: modes.count > 1,
+                onEditingChanged: { editing in
+                    guard !editing, let mode = selectedMode else { return }
+                    switchTo(mode)
                 }
-            }
-            .labelsHidden()
-            .controlSize(.small)
-            .frame(maxWidth: 188)
+            )
+            .opacity(modes.isEmpty ? 0.45 : 1)
             .disabled(isSwitching || modes.isEmpty)
-            .onChange(of: selectedModeID) { _, newID in
-                guard newID != display.currentDisplayMode?.id,
-                      let mode = modes.first(where: { $0.id == newID }) else { return }
-                switchTo(mode)
-            }
         }
         .onAppear {
-            selectedModeID = display.currentDisplayMode?.id ?? modes.first?.id ?? 0
+            syncSelection()
         }
         .onChange(of: display.currentDisplayMode?.id) { _, newID in
-            if let newID, selectedModeID != newID {
-                selectedModeID = newID
+            if let newID, appliedModeID != newID {
+                syncSelection()
             }
         }
     }
 
     private func modeTitle(_ mode: DisplayMode) -> String {
-        var text = mode.resolutionString
-        if mode.isHiDPI { text += " HiDPI" }
-        if mode.refreshRate > 0 { text += " \(mode.refreshRateString)" }
-        return text
+        mode.resolutionString
+    }
+
+    private func syncSelection() {
+        guard !modes.isEmpty else {
+            selectedIndex = 0
+            appliedModeID = 0
+            return
+        }
+
+        if let current = display.currentDisplayMode,
+           let exact = modes.firstIndex(where: { $0.id == current.id }) {
+            selectedIndex = Double(exact)
+            appliedModeID = current.id
+            return
+        }
+
+        if let current = display.currentDisplayMode,
+           let sameResolution = modes.firstIndex(where: {
+               $0.width == current.width && $0.height == current.height
+           }) {
+            selectedIndex = Double(sameResolution)
+            appliedModeID = current.id
+            return
+        }
+
+        selectedIndex = Double(max(modes.count - 1, 0))
+        appliedModeID = modes[Int(selectedIndex)].id
     }
 
     private func switchTo(_ mode: DisplayMode) {
+        guard mode.id != appliedModeID else { return }
         isSwitching = true
         let displayID = display.displayID
         Task { @MainActor in
@@ -558,11 +532,126 @@ struct QuickDisplayModePickerView: View {
                     DisplayMode.currentMode(for: displayID)
                 }.value
                 display.currentDisplayMode = refreshedMode ?? mode
+                appliedModeID = (refreshedMode ?? mode).id
             } else {
-                selectedModeID = display.currentDisplayMode?.id ?? selectedModeID
+                syncSelection()
             }
             isSwitching = false
         }
+    }
+}
+
+struct QuickPillSlider: View {
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    let step: Double
+    let icon: String
+    let valueText: String
+    let showsTicks: Bool
+    var onEditingChanged: (Bool) -> Void = { _ in }
+
+    @State private var isDragging = false
+
+    var body: some View {
+        GeometryReader { proxy in
+            let height: CGFloat = 28
+            let knobSize: CGFloat = 28
+            let trackHeight: CGFloat = 22
+            let iconSize: CGFloat = 24
+            let minX: CGFloat = 0
+            let width = max(proxy.size.width, knobSize)
+            let trackWidth = width
+            let progress = CGFloat((value - range.lowerBound) / max(range.upperBound - range.lowerBound, 1))
+                .clamped(to: 0...1)
+            let knobX = minX + progress * (trackWidth - knobSize)
+
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(Color.primary.opacity(0.14))
+                    .overlay(
+                        Capsule()
+                            .stroke(Color.primary.opacity(0.24), lineWidth: 1)
+                    )
+                    .frame(width: trackWidth, height: trackHeight)
+                    .offset(y: (height - trackHeight) / 2)
+
+                Capsule()
+                    .fill(Color.white.opacity(0.9))
+                    .frame(width: max(iconSize, knobX + knobSize), height: trackHeight)
+                    .offset(y: (height - trackHeight) / 2)
+                    .opacity(0.82)
+
+                if showsTicks {
+                    HStack(spacing: 0) {
+                        ForEach(0..<Int(max(range.upperBound - range.lowerBound, 0)) + 1, id: \.self) { index in
+                            Circle()
+                                .fill(Color.primary.opacity(0.18))
+                                .frame(width: 3, height: 3)
+                            if index < Int(max(range.upperBound - range.lowerBound, 0)) {
+                                Spacer(minLength: 0)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 9)
+                    .frame(width: trackWidth, height: height)
+                }
+
+                Circle()
+                    .fill(Color.white)
+                    .shadow(color: .black.opacity(0.18), radius: 3, x: 0, y: 1)
+                    .frame(width: iconSize, height: iconSize)
+                    .overlay(
+                        Image(systemName: icon)
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundColor(.secondary)
+                    )
+                    .offset(x: 2, y: (height - iconSize) / 2)
+
+                Circle()
+                    .fill(isDragging ? Color(white: 0.86) : Color.white)
+                    .shadow(color: .black.opacity(0.2), radius: 4, x: 0, y: 1)
+                    .frame(width: knobSize, height: knobSize)
+                    .offset(x: knobX)
+
+                Text(valueText)
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .foregroundColor(progress > 0.62 ? .black.opacity(0.55) : .secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                    .frame(maxWidth: 86, alignment: .trailing)
+                    .offset(x: width - 90, y: 7)
+            }
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { gesture in
+                        if !isDragging {
+                            isDragging = true
+                            onEditingChanged(true)
+                        }
+                        updateValue(from: gesture.location.x, width: trackWidth)
+                    }
+                    .onEnded { gesture in
+                        updateValue(from: gesture.location.x, width: trackWidth)
+                        isDragging = false
+                        onEditingChanged(false)
+                    }
+            )
+        }
+        .frame(height: 28)
+    }
+
+    private func updateValue(from x: CGFloat, width: CGFloat) {
+        let progress = Double((x / max(width, 1)).clamped(to: 0...1))
+        let raw = range.lowerBound + (range.upperBound - range.lowerBound) * progress
+        let stepped = (raw / step).rounded() * step
+        value = min(max(stepped, range.lowerBound), range.upperBound)
+    }
+}
+
+private extension Comparable {
+    func clamped(to range: ClosedRange<Self>) -> Self {
+        min(max(self, range.lowerBound), range.upperBound)
     }
 }
 
