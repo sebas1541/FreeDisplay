@@ -2,6 +2,11 @@ import Foundation
 import CoreGraphics
 import Combine
 
+struct KeyboardShortcutSpec: Codable, Equatable {
+    let keyCode: Int
+    let modifierFlags: UInt64
+}
+
 /// Centralized settings persistence service.
 /// Simple settings use UserDefaults via @AppStorage-compatible keys.
 /// Complex configurations are stored as JSON in ~/Library/Application Support/FreeDisplay/.
@@ -29,6 +34,9 @@ final class SettingsService: ObservableObject, @unchecked Sendable {
         static let menuWidth              = "fd.menuWidth"
         static let showCombinedBrightness = "fd.showCombinedBrightness"
         static let allowSoftwareBrightness = "fd.allowSoftwareBrightness"
+        static let brightnessShortcutsEnabled = "fd.brightnessShortcuts.enabled"
+        static let brightnessIncreaseShortcut = "fd.brightnessShortcuts.increase"
+        static let brightnessDecreaseShortcut = "fd.brightnessShortcuts.decrease"
         static let ddcCacheTTL            = "fd.ddcCacheTTL"
         static let checkUpdatesOnLaunch   = "fd.checkUpdatesOnLaunch"
         static let colorPickerHistory     = "fd.colorPickerHistory"
@@ -58,6 +66,18 @@ final class SettingsService: ObservableObject, @unchecked Sendable {
 
     @Published var allowSoftwareBrightness: Bool = true {
         didSet { defaults.set(allowSoftwareBrightness, forKey: Keys.allowSoftwareBrightness) }
+    }
+
+    @Published var brightnessShortcutsEnabled: Bool = false {
+        didSet { defaults.set(brightnessShortcutsEnabled, forKey: Keys.brightnessShortcutsEnabled) }
+    }
+
+    @Published var brightnessIncreaseShortcut: KeyboardShortcutSpec? = nil {
+        didSet { saveShortcut(brightnessIncreaseShortcut, forKey: Keys.brightnessIncreaseShortcut) }
+    }
+
+    @Published var brightnessDecreaseShortcut: KeyboardShortcutSpec? = nil {
+        didSet { saveShortcut(brightnessDecreaseShortcut, forKey: Keys.brightnessDecreaseShortcut) }
     }
 
     @Published var ddcCacheTTL: Double = 5.0 {
@@ -106,6 +126,21 @@ final class SettingsService: ObservableObject, @unchecked Sendable {
         colorPickerHistory = history
     }
 
+    // MARK: - Keyboard Shortcuts
+
+    private func saveShortcut(_ shortcut: KeyboardShortcutSpec?, forKey key: String) {
+        guard let shortcut else {
+            defaults.removeObject(forKey: key)
+            return
+        }
+        defaults.set(try? JSONEncoder().encode(shortcut), forKey: key)
+    }
+
+    private func loadShortcut(forKey key: String) -> KeyboardShortcutSpec? {
+        guard let data = defaults.data(forKey: key) else { return nil }
+        return try? JSONDecoder().decode(KeyboardShortcutSpec.self, from: data)
+    }
+
     // MARK: - JSON Persistence Helpers
 
     func save<T: Encodable>(_ value: T, filename: String) {
@@ -139,6 +174,9 @@ final class SettingsService: ObservableObject, @unchecked Sendable {
             ? defaults.bool(forKey: Keys.showCombinedBrightness) : true
         allowSoftwareBrightness = defaults.object(forKey: Keys.allowSoftwareBrightness) != nil
             ? defaults.bool(forKey: Keys.allowSoftwareBrightness) : true
+        brightnessShortcutsEnabled = defaults.bool(forKey: Keys.brightnessShortcutsEnabled)
+        brightnessIncreaseShortcut = loadShortcut(forKey: Keys.brightnessIncreaseShortcut)
+        brightnessDecreaseShortcut = loadShortcut(forKey: Keys.brightnessDecreaseShortcut)
         ddcCacheTTL = defaults.object(forKey: Keys.ddcCacheTTL) != nil
             ? defaults.double(forKey: Keys.ddcCacheTTL) : 5.0
         checkUpdatesOnLaunch = defaults.object(forKey: Keys.checkUpdatesOnLaunch) != nil

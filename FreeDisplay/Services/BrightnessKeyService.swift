@@ -44,6 +44,8 @@ final class BrightnessKeyService: @unchecked Sendable {
 
     /// CGEventType raw value for NSSystemDefined / NX_SYSDEFINED events (media keys).
     private nonisolated(unsafe) static let cgEventTypeSystemDefinedRaw: UInt32 = 14
+    private nonisolated(unsafe) static let cgEventTypeKeyDownRaw: UInt32 = CGEventType.keyDown.rawValue
+    private nonisolated(unsafe) static let cgEventTypeKeyUpRaw: UInt32 = CGEventType.keyUp.rawValue
     /// NX_SUBTYPE_AUX_CONTROL_BUTTONS — the subtype value for media/function keys.
     private nonisolated(unsafe) static let nxSubtypeAuxControlButtons: Int16 = 8
     /// NX_KEYTYPE_BRIGHTNESS_UP
@@ -53,6 +55,12 @@ final class BrightnessKeyService: @unchecked Sendable {
 
     /// Each key press moves brightness by 1/16 (about  6.25 %), matching macOS native behaviour.
     private nonisolated(unsafe) static let brightnessStep: Double = 100.0 / 16.0
+    private nonisolated(unsafe) static let shortcutModifierMaskRaw = UInt64(NSEvent.ModifierFlags.deviceIndependentFlagsMask.rawValue)
+
+    private enum ShortcutDirection {
+        case increase
+        case decrease
+    }
 
     // MARK: - Start / Stop
 
@@ -66,13 +74,16 @@ final class BrightnessKeyService: @unchecked Sendable {
         let retained = Unmanaged.passRetained(self)
         selfRetained = retained
 
-        let systemDefinedMask = CGEventMask(1 << Self.cgEventTypeSystemDefinedRaw)
+        let eventMask =
+            CGEventMask(1 << Self.cgEventTypeSystemDefinedRaw) |
+            CGEventMask(1 << Self.cgEventTypeKeyDownRaw) |
+            CGEventMask(1 << Self.cgEventTypeKeyUpRaw)
 
         let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
             options: .defaultTap,
-            eventsOfInterest: systemDefinedMask,
+            eventsOfInterest: eventMask,
             callback: brightnessKeyEventCallback,
             userInfo: retained.toOpaque()
         )
@@ -157,6 +168,10 @@ final class BrightnessKeyService: @unchecked Sendable {
             return Unmanaged.passRetained(event)
         }
 
+        if type.rawValue == Self.cgEventTypeKeyDownRaw || type.rawValue == Self.cgEventTypeKeyUpRaw {
+            return handleKeyboardShortcut(type: type, event: event)
+        }
+
         guard type.rawValue == Self.cgEventTypeSystemDefinedRaw else {
             return Unmanaged.passRetained(event)
         }
@@ -195,9 +210,62 @@ final class BrightnessKeyService: @unchecked Sendable {
             return Unmanaged.passRetained(event)
         }
 
-        // Cursor is on an external display — schedule brightness adjustment and consume.
-        let displayID = screenNumber
         let step = (keyCode == Self.nxKeytypeBrightnessUp) ? Self.brightnessStep : -Self.brightnessStep
+        performBrightnessStep(step, on: screenNumber)
+
+        // Return nil to consume (suppress) the event so macOS doesn't also adjust built-in brightness.
+        return nil
+    }
+
+    private nonisolated func handleKeyboardShortcut(
+        type: CGEventType,
+        event: CGEvent
+    ) -> Unmanaged<CGEvent>? {
+        let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
+        let modifierFlags = UInt64(event.flags.rawValue) & Self.shortcutModifierMaskRaw
+        let direction = MainActor.assumeIsolated {
+            self.shortcutDirection(forKeyCode: keyCode, modifierFlags: modifierFlags)
+        }
+
+        guard let direction else { return Unmanaged.passRetained(event) }
+
+        if type.rawValue == Self.cgEventTypeKeyDownRaw {
+            let step = (direction == .increase) ? Self.brightnessStep : -Self.brightnessStep
+            let displayID = displayIDUnderCursor()
+            performBrightnessStep(step, on: displayID)
+        }
+
+        return nil
+    }
+
+    @MainActor
+    private func shortcutDirection(forKeyCode keyCode: Int, modifierFlags: UInt64) -> ShortcutDirection? {
+        let settings = SettingsService.shared
+        guard settings.brightnessShortcutsEnabled else { return nil }
+
+        if settings.brightnessIncreaseShortcut?.keyCode == keyCode &&
+            settings.brightnessIncreaseShortcut?.modifierFlags == modifierFlags {
+            return .increase
+        }
+
+        if settings.brightnessDecreaseShortcut?.keyCode == keyCode &&
+            settings.brightnessDecreaseShortcut?.modifierFlags == modifierFlags {
+            return .decrease
+        }
+
+        return nil
+    }
+
+    private nonisolated func displayIDUnderCursor() -> CGDirectDisplayID? {
+        let mouseLocation = NSEvent.mouseLocation
+        guard let screen = NSScreen.screens.first(where: { NSMouseInRect(mouseLocation, $0.frame, false) }) else {
+            return nil
+        }
+        return screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
+    }
+
+    private nonisolated func performBrightnessStep(_ step: Double, on displayID: CGDirectDisplayID?) {
+        guard let displayID else { return }
 
         // All data captured here is Sendable (CGDirectDisplayID = UInt32, Double).
         Task { @MainActor in
@@ -207,15 +275,12 @@ final class BrightnessKeyService: @unchecked Sendable {
             // Use smooth animation — cancels any in-progress animation automatically.
             BrightnessService.shared.setBrightnessSmooth(newBrightness, for: display)
 
-            // Show OSD on the external display where brightness was adjusted.
+            // Show OSD on the display where brightness was adjusted.
             if let screen = NSScreen.screens.first(where: {
                 ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID) == displayID
             }) {
                 BrightnessHUDService.shared.show(brightness: newBrightness, on: screen)
             }
         }
-
-        // Return nil to consume (suppress) the event so macOS doesn't also adjust built-in brightness.
-        return nil
     }
 }
