@@ -55,7 +55,12 @@ final class BrightnessKeyService: @unchecked Sendable {
 
     /// Each key press moves brightness by 1/16 (about  6.25 %), matching macOS native behaviour.
     private nonisolated(unsafe) static let brightnessStep: Double = 100.0 / 16.0
-    private nonisolated(unsafe) static let shortcutModifierMaskRaw = UInt64(NSEvent.ModifierFlags.deviceIndependentFlagsMask.rawValue)
+    private nonisolated(unsafe) static let shortcutModifierMaskRaw = UInt64(
+        NSEvent.ModifierFlags.command.rawValue |
+        NSEvent.ModifierFlags.option.rawValue |
+        NSEvent.ModifierFlags.control.rawValue |
+        NSEvent.ModifierFlags.shift.rawValue
+    )
 
     private enum ShortcutDirection {
         case increase
@@ -79,13 +84,14 @@ final class BrightnessKeyService: @unchecked Sendable {
             CGEventMask(1 << Self.cgEventTypeKeyDownRaw) |
             CGEventMask(1 << Self.cgEventTypeKeyUpRaw)
 
-        let tap = CGEvent.tapCreate(
-            tap: .cgSessionEventTap,
-            place: .headInsertEventTap,
-            options: .defaultTap,
-            eventsOfInterest: eventMask,
-            callback: brightnessKeyEventCallback,
-            userInfo: retained.toOpaque()
+        let tap = Self.makeEventTap(
+            tapLocation: .cghidEventTap,
+            eventMask: eventMask,
+            retainedSelf: retained
+        ) ?? Self.makeEventTap(
+            tapLocation: .cgSessionEventTap,
+            eventMask: eventMask,
+            retainedSelf: retained
         )
 
         guard let tap else {
@@ -104,6 +110,21 @@ final class BrightnessKeyService: @unchecked Sendable {
         self.runLoopSource = source
 
         NSLog("[BrightnessKeyService] Event tap installed successfully")
+    }
+
+    private nonisolated static func makeEventTap(
+        tapLocation: CGEventTapLocation,
+        eventMask: CGEventMask,
+        retainedSelf: Unmanaged<BrightnessKeyService>
+    ) -> CFMachPort? {
+        CGEvent.tapCreate(
+            tap: tapLocation,
+            place: .headInsertEventTap,
+            options: .defaultTap,
+            eventsOfInterest: eventMask,
+            callback: brightnessKeyEventCallback,
+            userInfo: retainedSelf.toOpaque()
+        )
     }
 
     /// Removes the event tap and releases the retained self reference.
@@ -222,7 +243,7 @@ final class BrightnessKeyService: @unchecked Sendable {
         event: CGEvent
     ) -> Unmanaged<CGEvent>? {
         let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
-        let modifierFlags = UInt64(event.flags.rawValue) & Self.shortcutModifierMaskRaw
+        let modifierFlags = Self.normalizedShortcutModifiers(UInt64(event.flags.rawValue))
         let direction = MainActor.assumeIsolated {
             self.shortcutDirection(forKeyCode: keyCode, modifierFlags: modifierFlags)
         }
@@ -244,16 +265,20 @@ final class BrightnessKeyService: @unchecked Sendable {
         guard settings.brightnessShortcutsEnabled else { return nil }
 
         if settings.brightnessIncreaseShortcut?.keyCode == keyCode &&
-            settings.brightnessIncreaseShortcut?.modifierFlags == modifierFlags {
+            Self.normalizedShortcutModifiers(settings.brightnessIncreaseShortcut?.modifierFlags ?? 0) == modifierFlags {
             return .increase
         }
 
         if settings.brightnessDecreaseShortcut?.keyCode == keyCode &&
-            settings.brightnessDecreaseShortcut?.modifierFlags == modifierFlags {
+            Self.normalizedShortcutModifiers(settings.brightnessDecreaseShortcut?.modifierFlags ?? 0) == modifierFlags {
             return .decrease
         }
 
         return nil
+    }
+
+    private nonisolated static func normalizedShortcutModifiers(_ rawFlags: UInt64) -> UInt64 {
+        rawFlags & shortcutModifierMaskRaw
     }
 
     private nonisolated func displayIDUnderCursor() -> CGDirectDisplayID? {

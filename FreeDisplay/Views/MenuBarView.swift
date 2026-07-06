@@ -551,7 +551,7 @@ struct ShortcutRecorderRow: View {
     private static let escapeKeyCode: UInt16 = 53
 
     private static func normalizedModifierFlags(_ flags: NSEvent.ModifierFlags) -> NSEvent.ModifierFlags {
-        flags.intersection(.deviceIndependentFlagsMask)
+        flags.intersection([.command, .option, .control, .shift])
     }
 
     private static func allowsBareKey(_ keyCode: UInt16) -> Bool {
